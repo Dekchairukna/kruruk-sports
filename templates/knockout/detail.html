@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+{% block page_title %}{{ comp.name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h4 class="mb-0">{{ comp.name }}</h4>
+    <div class="text-muted small">{{ comp.sport_division.label if comp.sport_division else comp.event.name }} · {{ comp.result_type }}{% if comp.result_type=='set_based' %} · {{ comp.max_sets }} เซต ชนะ {{ comp.sets_to_win }}{% endif %}</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-light" href="{{ url_for('event_knockout', event_id=comp.event_id) }}">กลับรายการ</a>
+    <form method="post" action="{{ url_for('knockout_delete', comp_id=comp.id) }}" onsubmit="return confirm('ลบรายการ Knockout นี้?')"><button class="btn btn-outline-danger">ลบ</button></form>
+  </div>
+</div>
+{% for key, matches in rounds.items()|sort %}
+  <div class="card soft-card mb-3"><div class="card-body">
+    <h5>{{ key[1] }}</h5>
+    <div class="table-responsive"><table class="table align-middle">
+      <thead><tr><th>คู่</th><th>ทีม A</th><th>ผล</th><th>ทีม B</th><th>ผู้ชนะ</th><th>บันทึก</th></tr></thead>
+      <tbody>{% for m in matches %}<tr id="match-{{ m.id }}">
+        <td>{{ m.match_no }}</td>
+        <td>{{ m.team_a.name if m.team_a else 'BYE' }}</td>
+        <td><b>{{ '-' if m.score_a is none else m.score_a }} - {{ '-' if m.score_b is none else m.score_b }}</b></td>
+        <td>{{ m.team_b.name if m.team_b else 'BYE' }}</td>
+        <td>{% if m.winner_team %}<span class="badge bg-success">{{ m.winner_team.name }}</span>{% else %}<span class="text-muted">รอบันทึก</span>{% endif %}</td>
+        <td>
+          {% if comp.result_type == 'set_based' %}
+            <a class="btn btn-sm btn-primary" href="{{ url_for('knockout_match_result', match_id=m.id) }}">บันทึกรายเซต</a>
+            {% if m.set_scores %}<div class="small text-muted mt-1">{{ m.set_scores }}</div>{% endif %}
+          {% else %}
+          <form method="post" action="{{ url_for('knockout_match_score', match_id=m.id) }}" class="d-flex gap-1 align-items-center">
+              <input class="form-control form-control-sm score-box" name="score_a" value="{{ '' if m.score_a is none else m.score_a }}" placeholder="A">
+              <span>-</span>
+              <input class="form-control form-control-sm score-box" name="score_b" value="{{ '' if m.score_b is none else m.score_b }}" placeholder="B">
+              <input class="form-control form-control-sm" name="note" value="{{ m.note or '' }}" placeholder="หมายเหตุ">
+              <button class="btn btn-sm btn-primary">บันทึก</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+  </div></div>
+{% else %}
+  <div class="empty-box">ยังไม่มีคู่แข่งขัน</div>
+{% endfor %}
+{% endblock %}

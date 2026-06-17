@@ -1,0 +1,55 @@
+{% extends 'base.html' %}
+{% block page_title %}รายงานและสูจิบัตร{% endblock %}
+{% block content %}
+<div class="card soft-card mb-3">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start gap-3">
+      <div>
+        <div class="text-muted small">{{ event.organization.name }}</div>
+        <h3 class="mb-1">รายงานและสูจิบัตรออนไลน์</h3>
+        <div class="text-muted">{{ event.name }}</div>
+      </div>
+      <a class="btn btn-light" href="{{ url_for('event_detail', event_id=event.id) }}">กลับหน้างาน</a>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card soft-card h-100">
+      <div class="card-body text-center">
+        <h5>QR Code สูจิบัตรออนไลน์</h5>
+        <img src="{{ qr_data }}" class="img-fluid my-3" style="max-width:220px">
+        <div class="small text-muted mb-3">{{ souvenir_url }}</div>
+        <a class="btn btn-success w-100" target="_blank" href="{{ url_for('event_souvenir_public', event_id=event.id) }}">เปิดสูจิบัตรออนไลน์</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-8">
+    <div class="card soft-card h-100">
+      <div class="card-body">
+        <h5>สรุปรายงาน</h5>
+        <div class="row g-3 text-center">
+          <div class="col-md-4"><div class="border rounded p-3"><div class="text-muted small">ทีม/สี</div><h3>{{ teams|length }}</h3></div></div>
+          <div class="col-md-4"><div class="border rounded p-3"><div class="text-muted small">นักกีฬา</div><h3>{{ athletes|length }}</h3></div></div>
+          <div class="col-md-4"><div class="border rounded p-3"><div class="text-muted small">ผู้ฝึกสอน</div><h3>{{ coaches|length }}</h3></div></div>
+        </div>
+
+        <hr>
+        <h6>Export Excel</h6>
+        <div class="d-flex flex-wrap gap-2">
+          <a class="btn btn-outline-primary" href="{{ url_for('report_teams_excel', event_id=event.id) }}">รายงานทีม Excel</a>
+          <a class="btn btn-outline-primary" href="{{ url_for('report_athletes_excel', event_id=event.id) }}">รายชื่อนักกีฬา Excel</a>
+          <a class="btn btn-outline-primary" href="{{ url_for('report_medals_excel', event_id=event.id) }}">ตารางเหรียญ Excel</a>
+        </div>
+
+        <hr>
+        <h6>พิมพ์ PDF</h6>
+        <div class="text-muted small mb-2">เปิดสูจิบัตรออนไลน์ แล้วกด Print / Save as PDF</div>
+        <a class="btn btn-dark" target="_blank" href="{{ url_for('event_souvenir_public', event_id=event.id) }}">เปิดหน้า Print</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

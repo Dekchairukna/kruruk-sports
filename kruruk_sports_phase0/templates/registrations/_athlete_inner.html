@@ -1,0 +1,61 @@
+<div class="card soft-card"><div class="card-body">
+  <h4>{{ 'แก้ไขนักกีฬา' if athlete else 'เพิ่มนักกีฬา' }}</h4>
+  <div class="text-muted mb-3">ทีม: {{ team.name }} · งาน: {{ team.event.name }}</div>
+  <form method="post" enctype="multipart/form-data">
+    <div class="row g-3">
+      <div class="col-md-6"><label class="form-label">ชื่อ-สกุล</label><input class="form-control" name="full_name" value="{{ athlete.full_name if athlete else '' }}" required></div>
+      <div class="col-md-3"><label class="form-label">เพศ</label><select class="form-select" name="gender">{% for g in ['ชาย','หญิง','ผสม'] %}<option {{ 'selected' if athlete and athlete.gender==g else '' }}>{{ g }}</option>{% endfor %}</select></div>
+      <div class="col-md-3"><label class="form-label">รูปภาพ</label><input class="form-control" type="file" name="photo" accept="image/*"></div>
+      <div class="col-md-3"><label class="form-label">ชั้น</label><input class="form-control" name="grade_level" placeholder="เช่น ป.6" value="{{ athlete.grade_level if athlete else '' }}"></div>
+      <div class="col-md-3"><label class="form-label">ห้อง</label><input class="form-control" name="classroom" value="{{ athlete.classroom if athlete else '' }}"></div>
+      <div class="col-md-3"><label class="form-label">เลขประจำตัว</label><input class="form-control" name="student_no" value="{{ athlete.student_no if athlete else '' }}"></div>
+      <div class="col-md-3"><label class="form-label">เบอร์โทร</label><input class="form-control" name="phone" value="{{ athlete.phone if athlete else '' }}"></div>
+      <div class="col-12"><label class="form-label">หมายเหตุ</label><textarea class="form-control" name="note" rows="2">{{ athlete.note if athlete else '' }}</textarea></div>
+    </div>
+    <hr>
+    <h5>รายการกีฬาที่สมัคร</h5>
+    {% if not sport_divisions %}
+      <div class="alert alert-warning">ยังไม่ได้ตั้งค่า Sport Setup ของงานนี้ แอดมินต้องไปที่เมนู “ตั้งค่ากีฬา” ก่อน ทีมจึงจะเลือกกีฬา/รุ่น/เพศได้</div>
+    {% endif %}
+    <div id="regRows">
+      {% set regs = athlete.registrations if athlete else [] %}
+      {% for r in regs %}
+      <div class="row g-2 mb-2 reg-row">
+        <div class="col-md-11">
+          <select class="form-select" name="sport_division_id[]">
+            <option value="">เลือกรายการกีฬา / รุ่น / เพศ</option>
+            {% for d in sport_divisions %}
+              {% set is_selected = (d.sport.name==r.sport_name and d.class_name==r.category_name and d.gender==r.gender) %}
+              <option value="{{ d.id }}" {{ 'selected' if is_selected else '' }}>{{ d.sport.name }} / {{ d.class_name }} / {{ d.gender }} · {{ d.competition_format }}</option>
+            {% endfor %}
+          </select>
+          <div class="form-text">เดิม: {{ r.sport_name }} / {{ r.category_name or '-' }} / {{ r.gender }}</div>
+        </div>
+        <div class="col-md-1"><button type="button" class="btn btn-outline-danger w-100" onclick="this.closest('.reg-row').remove()">×</button></div>
+      </div>
+      {% endfor %}
+      {% if not regs %}
+      <div class="row g-2 mb-2 reg-row">
+        <div class="col-md-11">
+          <select class="form-select" name="sport_division_id[]">
+            <option value="">เลือกรายการกีฬา / รุ่น / เพศ</option>
+            {% for d in sport_divisions %}<option value="{{ d.id }}">{{ d.sport.name }} / {{ d.class_name }} / {{ d.gender }} · {{ d.competition_format }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-1"><button type="button" class="btn btn-outline-danger w-100" onclick="this.closest('.reg-row').remove()">×</button></div>
+      </div>
+      {% endif %}
+    </div>
+    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="addRegRow()">+ เพิ่มรายการกีฬา</button>
+    <div class="mt-4 d-flex gap-2"><button class="btn btn-primary">บันทึก</button>{% if public_mode %}<a class="btn btn-light" href="{{ url_for('portal_athletes', team_id=team.id) }}">กลับ</a>{% else %}<a class="btn btn-light" href="{{ url_for('event_registrations', event_id=team.event_id) }}">กลับ</a>{% endif %}</div>
+  </form>
+</div></div>
+<script>
+function addRegRow(){
+ const wrap=document.getElementById('regRows');
+ const div=document.createElement('div');
+ div.className='row g-2 mb-2 reg-row';
+ div.innerHTML=`<div class="col-md-11"><select class="form-select" name="sport_division_id[]"><option value="">เลือกรายการกีฬา / รุ่น / เพศ</option>{% for d in sport_divisions %}<option value="{{ d.id }}">{{ d.sport.name }} / {{ d.class_name }} / {{ d.gender }} · {{ d.competition_format }}</option>{% endfor %}</select></div><div class="col-md-1"><button type="button" class="btn btn-outline-danger w-100" onclick="this.closest('.reg-row').remove()">×</button></div>`;
+ wrap.appendChild(div);
+}
+</script>

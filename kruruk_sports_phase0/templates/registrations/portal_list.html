@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% block title %}กรอกนักกีฬา · KRURUK SPORTS{% endblock %}
+{% block auth_content %}
+<div class="container py-4">
+  <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <div><h3>{{ team.name }}</h3><div class="text-muted">{{ team.event.name }}</div></div>
+    <div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('team_portal_profile', team_id=team.id) }}">ข้อมูลทีม</a><a class="btn btn-primary" href="{{ url_for('portal_athlete_new', team_id=team.id) }}">+ นักกีฬา</a><a class="btn btn-success" href="{{ url_for('portal_coach_new', team_id=team.id) }}">+ ผู้ฝึกสอน</a></div>
+  </div>
+  {% include '_flash.html' %}
+  <div class="card soft-card mb-4"><div class="card-body"><h5>นักกีฬา</h5><div class="table-responsive"><table class="table">
+    <thead><tr><th>ชื่อ</th><th>เพศ/ชั้น/ห้อง</th><th>กีฬา</th><th>สถานะ</th><th></th></tr></thead><tbody>
+    {% for a in athletes %}<tr><td><b>{{ a.full_name }}</b><div class="small text-muted">{{ a.student_no or '' }}</div></td><td>{{ a.gender }} · {{ a.grade_level or '-' }}/{{ a.classroom or '-' }}</td><td>{% for r in a.registrations %}<span class="badge text-bg-light border me-1">{{ r.sport_name }} · {{ r.category_name or '-' }} · {{ r.gender }}</span>{% endfor %}</td><td>{{ a.status }}</td><td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal_athlete_edit', athlete_id=a.id) }}">แก้ไข</a><form class="d-inline" method="post" action="{{ url_for('portal_athlete_delete', athlete_id=a.id) }}" onsubmit="return confirm('ลบ?')"><button class="btn btn-sm btn-outline-danger">ลบ</button></form></td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted">ยังไม่มีนักกีฬา</td></tr>{% endfor %}
+    </tbody></table></div></div></div>
+  <div class="card soft-card"><div class="card-body"><h5>ผู้ฝึกสอน</h5><div class="table-responsive"><table class="table">
+    <thead><tr><th>ชื่อ</th><th>เบอร์โทร</th><th>กีฬาที่รับผิดชอบ</th><th>สถานะ</th><th></th></tr></thead><tbody>
+    {% for c in coaches %}<tr><td><b>{{ c.full_name }}</b></td><td>{{ c.phone or '-' }}</td><td>{{ c.sport_responsibility or '-' }}</td><td>{{ c.status }}</td><td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal_coach_edit', coach_id=c.id) }}">แก้ไข</a><form class="d-inline" method="post" action="{{ url_for('portal_coach_delete', coach_id=c.id) }}" onsubmit="return confirm('ลบ?')"><button class="btn btn-sm btn-outline-danger">ลบ</button></form></td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted">ยังไม่มีผู้ฝึกสอน</td></tr>{% endfor %}
+    </tbody></table></div></div></div>
+</div>
+{% endblock %}

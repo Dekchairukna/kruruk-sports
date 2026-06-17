@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block page_title %}{{ comp.name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div><h4 class="mb-0">{{ comp.name }}</h4><div class="text-muted small">{{ comp.activity_type }}{% if comp.sport_division %} · {{ comp.sport_division.label }}{% endif %}</div></div>
+  <div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('event_contests', event_id=comp.event_id) }}">กลับ</a><a class="btn btn-outline-primary" href="{{ url_for('contest_print', comp_id=comp.id) }}" target="_blank">พิมพ์ผล</a><a class="btn btn-success" href="{{ url_for('contest_export_excel', comp_id=comp.id) }}">Export Excel</a></div>
+</div>
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card soft-card mb-3"><div class="card-body">
+      <form method="get" class="row g-2 align-items-end mb-3">
+        <div class="col-md-6"><label class="form-label">เลือกกรรมการเพื่อให้คะแนน</label><select class="form-select" name="judge_id" onchange="this.form.submit()">{% for j in comp.judges %}<option value="{{ j.id }}" {{ 'selected' if j.id==selected_judge_id else '' }}>{{ j.name }}{% if j.position %} · {{ j.position }}{% endif %}</option>{% endfor %}</select></div>
+      </form>
+      <form method="post" action="{{ url_for('contest_scores_save', comp_id=comp.id) }}">
+        <input type="hidden" name="judge_id" value="{{ selected_judge_id }}">
+        <div class="table-responsive"><table class="table table-bordered align-middle">
+          <thead><tr><th style="min-width:180px">ทีม/สี</th>{% for cr in comp.criteria %}<th>{{ cr.name }}<br><small class="text-muted">เต็ม {{ cr.max_score:g }}</small></th>{% endfor %}</tr></thead>
+          <tbody>{% for team in teams %}<tr><th><span class="badge" style="background:{{ team.color_hex }}">&nbsp;</span> {{ team.name }}</th>{% for cr in comp.criteria %}{% set s = score_map.get((team.id, cr.id, selected_judge_id)) %}<td><input class="form-control form-control-sm" type="number" step="0.01" min="0" max="{{ cr.max_score }}" name="score_{{ team.id }}_{{ cr.id }}" value="{{ s.score if s else '' }}"></td>{% endfor %}</tr>{% endfor %}</tbody>
+        </table></div>
+        <button class="btn btn-primary">บันทึกคะแนนกรรมการ</button>
+      </form>
+    </div></div>
+    <div class="card soft-card"><div class="card-body"><h5>ผลรวมและเหรียญ</h5><div class="table-responsive"><table class="table align-middle"><thead><tr><th>อันดับ</th><th>เหรียญ</th><th>ทีม</th><th>คะแนนรวม</th></tr></thead><tbody>{% for r in results %}<tr><td>{{ r.rank }}</td><td>{% if r.medal=='gold' %}🥇 ทอง{% elif r.medal=='silver' %}🥈 เงิน{% elif r.medal=='bronze' %}🥉 ทองแดง{% endif %}</td><td>{{ r.team.name }}</td><td><b>{{ '%.2f'|format(r.total_score) }}</b></td></tr>{% else %}<tr><td colspan="4" class="text-muted text-center">ยังไม่มีคะแนน</td></tr>{% endfor %}</tbody></table></div></div></div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card soft-card mb-3"><div class="card-body"><h5>เกณฑ์คะแนน</h5>{% for cr in comp.criteria %}<div class="d-flex justify-content-between border-bottom py-2"><div>{{ cr.name }} <span class="text-muted small">({{ cr.max_score:g }})</span></div><form method="post" action="{{ url_for('contest_criterion_delete', criterion_id=cr.id) }}"><button class="btn btn-sm btn-link text-danger">ลบ</button></form></div>{% endfor %}<form method="post" action="{{ url_for('contest_criterion_add', comp_id=comp.id) }}" class="row g-2 mt-2"><div class="col-7"><input class="form-control form-control-sm" name="name" placeholder="ชื่อเกณฑ์"></div><div class="col-3"><input class="form-control form-control-sm" name="max_score" value="100"></div><div class="col-2"><button class="btn btn-sm btn-primary w-100">+</button></div></form></div></div>
+    <div class="card soft-card"><div class="card-body"><h5>กรรมการ</h5>{% for j in comp.judges %}<div class="d-flex justify-content-between border-bottom py-2"><div>{{ j.name }}<div class="text-muted small">{{ j.position }}</div></div><form method="post" action="{{ url_for('contest_judge_delete', judge_id=j.id) }}"><button class="btn btn-sm btn-link text-danger">ลบ</button></form></div>{% endfor %}<form method="post" action="{{ url_for('contest_judge_add', comp_id=comp.id) }}" class="mt-2"><input class="form-control form-control-sm mb-2" name="name" placeholder="ชื่อกรรมการ"><input class="form-control form-control-sm mb-2" name="position" placeholder="ตำแหน่ง"><button class="btn btn-sm btn-primary">เพิ่มกรรมการ</button></form></div></div>
+  </div>
+</div>
+{% endblock %}

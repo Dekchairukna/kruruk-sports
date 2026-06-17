@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% block page_title %}Admin · จัดการแพ็กเกจ{% endblock %}
+{% block content %}
+<div class="card soft-card mb-4"><div class="card-body">
+  <h5 class="mb-3">เพิ่มแพ็กเกจสมาชิก</h5>
+  <form method="post">
+    {% include 'billing/_plan_form_fields.html' %}
+    <button class="btn btn-primary mt-3"><i class="bi bi-plus-circle"></i> เพิ่มแพ็กเกจ</button>
+  </form>
+</div></div>
+<div class="card soft-card"><div class="card-body">
+  <h5>รายการแพ็กเกจ</h5>
+  <div class="table-responsive"><table class="table align-middle">
+    <thead><tr><th>แพ็กเกจ</th><th>ราคา</th><th>สิทธิ์</th><th>สถานะ</th><th></th></tr></thead>
+    <tbody>{% for p in plans %}<tr>
+      <td><b>{{ p.name }}</b><div class="text-muted small">{{ p.code }} · {{ p.description or '' }}</div></td>
+      <td>{{ '%.2f'|format(p.price) }} {{ p.currency }} / {{ p.billing_period }}</td>
+      <td class="small">งาน {{ p.limit_text(p.max_events) }} · ทีม {{ p.limit_text(p.max_teams_per_event) }} · นักกีฬา {{ p.limit_text(p.max_athletes_per_event) }}<br>
+        Live {{ '✓' if p.allow_live_board else '×' }} · Cert {{ '✓' if p.allow_certificates else '×' }} · PDF {{ '✓' if p.allow_reports_pdf else '×' }}</td>
+      <td><span class="badge {{ 'bg-success' if p.is_active else 'bg-secondary' }}">{{ 'active' if p.is_active else 'inactive' }}</span></td>
+      <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin_subscription_plan_edit', plan_id=p.id) }}">แก้ไข</a></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+</div></div>
+{% endblock %}

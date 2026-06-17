@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% block page_title %}บันทึกคะแนนรายเซต{% endblock %}
+{% block content %}
+<div class="card soft-card">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start mb-3">
+      <div>
+        <h4>บันทึกคะแนนรายเซต</h4>
+        <div class="text-muted small">{{ comp.name }} · กลุ่ม {{ match.group.name }} · คู่ {{ match.match_no }}</div>
+      </div>
+      <a class="btn btn-light" href="{{ url_for('rr_detail', comp_id=comp.id) }}#match-{{ match.id }}">กลับ</a>
+    </div>
+    <div class="row g-3 mb-3">
+      <div class="col-md-5"><div class="border rounded p-3 h-100"><h5>{{ match.team_a.name }}</h5></div></div>
+      <div class="col-md-2 text-center d-flex align-items-center justify-content-center"><span class="badge bg-primary fs-6">VS</span></div>
+      <div class="col-md-5"><div class="border rounded p-3 h-100"><h5>{{ match.team_b.name }}</h5></div></div>
+    </div>
+    <div class="alert alert-info">ระบบนี้จะคำนวณผลเซต ผู้ชนะ ผลต่างเซต และผลต่างแต้มให้อัตโนมัติ · เซตสูงสุด {{ cfg.max_sets }} · ชนะ {{ cfg.sets_to_win }} เซต · แต้มเป้าหมาย {{ cfg.points_per_set }}</div>
+    <form method="post">
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead><tr><th>เซต</th><th>{{ match.team_a.name }}</th><th>{{ match.team_b.name }}</th></tr></thead>
+          <tbody>
+            {% for i in range(1, cfg.max_sets + 1) %}
+            {% set cur = current_sets[i-1] if current_sets|length >= i else {} %}
+            <tr>
+              <td><b>เซต {{ i }}</b></td>
+              <td><input class="form-control" type="number" min="0" name="set_{{ i }}_a" value="{{ cur.a if cur.a is defined else '' }}" placeholder="{{ cfg.points_per_set }}"></td>
+              <td><input class="form-control" type="number" min="0" name="set_{{ i }}_b" value="{{ cur.b if cur.b is defined else '' }}" placeholder="{{ cfg.points_per_set }}"></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <label class="form-label">หมายเหตุ</label>
+      <textarea class="form-control mb-3" name="note" rows="2">{{ match.note or '' }}</textarea>
+      <button class="btn btn-primary btn-lg">บันทึกคะแนนรายเซต</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

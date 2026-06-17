@@ -17,11 +17,15 @@
       <a class="nav-link" href="{{ url_for('dashboard') }}"><i class="bi bi-grid-1x2"></i> Dashboard</a>
       <a class="nav-link" href="{{ url_for('organizations') }}"><i class="bi bi-building"></i> Organizations</a>
       <a class="nav-link" href="{{ url_for('events') }}"><i class="bi bi-trophy"></i> Events</a>
-      <a class="nav-link" href="{{ url_for('events') }}"><i class="bi bi-people"></i> Teams / Colors</a>
-      <a class="nav-link" href="{{ url_for('events') }}"><i class="bi bi-sliders"></i> Sport Setup</a>
+      {% set nav_eid = active_event_id() %}
+      {% set nav_oid = active_org_id() %}
+      <a class="nav-link" href="{{ url_for('teams_home') }}"><i class="bi bi-people"></i> Teams / Colors</a>
+      <a class="nav-link" href="{{ url_for('sport_setup_home') }}"><i class="bi bi-sliders"></i> Sport Setup</a>
+      <a class="nav-link" href="{{ url_for('billing_home') }}"><i class="bi bi-credit-card"></i> Billing</a>
+      {% if current_user.is_superadmin %}<a class="nav-link" href="{{ url_for('admin_subscription_plans') }}"><i class="bi bi-stars"></i> Packages</a>{% endif %}
       <a class="nav-link" href="{{ url_for('settings') }}"><i class="bi bi-gear"></i> Settings</a>
     </nav>
-    <div class="sidebar-footer">Phase 9 · Certificate</div>
+    <div class="sidebar-footer">Phase 13F · Context Fix</div>
   </aside>
   <main class="main">
     <header class="topbar">

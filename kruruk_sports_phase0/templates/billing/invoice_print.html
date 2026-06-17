@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+{% block page_title %}{{ 'ใบเสร็จรับเงิน' if invoice.status == 'paid' else 'ใบแจ้งชำระเงิน' }}{% endblock %}
+{% block content %}
+<style>@media print{.sidebar,.topbar,.btn-print{display:none!important}.main{margin:0!important}.content{padding:0!important}.invoice-box{box-shadow:none!important;border:0!important}}</style>
+<div class="card soft-card invoice-box"><div class="card-body p-5">
+  <div class="d-flex justify-content-between align-items-start mb-4"><div><h2>KRURUK SPORTS</h2><div class="text-muted">Manual Payment</div></div><div class="text-end"><h4>{{ 'ใบเสร็จรับเงิน' if invoice.status == 'paid' else 'ใบแจ้งชำระเงิน' }}</h4><div>{{ invoice.invoice_no }}</div></div></div>
+  <div class="row mb-4"><div class="col"><b>องค์กร</b><br>{{ invoice.organization.name }}<br>{{ invoice.organization.org_type }}</div><div class="col text-end"><b>วันที่ออก</b><br>{{ invoice.created_at.strftime('%d/%m/%Y') if invoice.created_at else '' }}<br><b>กำหนดชำระ</b><br>{{ invoice.due_date or '-' }}</div></div>
+  <table class="table"><thead><tr><th>รายการ</th><th class="text-end">จำนวนเงิน</th></tr></thead><tbody><tr><td>{{ invoice.title }}{% if invoice.subscription %}<div class="text-muted small">แพ็กเกจ {{ invoice.subscription.plan.name }} · {{ invoice.subscription.start_date }} - {{ invoice.subscription.end_date or 'ไม่กำหนด' }}</div>{% endif %}</td><td class="text-end">{{ '%.2f'|format(invoice.amount) }} {{ invoice.currency }}</td></tr></tbody><tfoot><tr><th>รวมสุทธิ</th><th class="text-end">{{ '%.2f'|format(invoice.amount) }} {{ invoice.currency }}</th></tr></tfoot></table>
+  <div class="mt-4"><b>สถานะ:</b> {{ invoice.status }}{% if invoice.paid_at %} · ชำระเมื่อ {{ invoice.paid_at.strftime('%d/%m/%Y %H:%M') }}{% endif %}</div>
+  {% if invoice.note %}<div class="alert alert-light mt-3">{{ invoice.note }}</div>{% endif %}
+  <button class="btn btn-primary btn-print mt-3" onclick="window.print()"><i class="bi bi-printer"></i> พิมพ์</button>
+</div></div>
+{% endblock %}

@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% block page_title %}Events{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="text-muted">จัดการงานแข่งขัน</div>
+  <a class="btn btn-primary" href="{{ url_for('event_new') }}">+ สร้างงานแข่งขัน</a>
+</div>
+<div class="card soft-card">
+  <div class="table-responsive">
+    <table class="table align-middle mb-0">
+      <thead><tr><th>งานแข่งขัน</th><th>องค์กร</th><th>ปี</th><th>สถานะ</th><th>วันที่</th><th></th></tr></thead>
+      <tbody>
+      {% for e in events %}
+      <tr>
+        <td><b>{{ e.name }}</b><div class="text-muted small">{{ e.location or '-' }}</div></td>
+        <td>{{ e.organization.name }}</td>
+        <td>{{ e.competition_year or '-' }}</td>
+        <td><span class="badge status-{{ e.status }}">{{ e.status }}</span></td>
+        <td>{{ e.start_date or '-' }}{% if e.end_date %} - {{ e.end_date }}{% endif %}</td>
+        <td class="text-end"><a class="btn btn-sm btn-primary" href="{{ url_for('event_detail', event_id=e.id) }}">เข้าสู่งาน</a> <a class="btn btn-sm btn-outline-primary" href="{{ url_for('event_edit', event_id=e.id) }}">แก้ไข</a></td>
+      </tr>
+      {% else %}<tr><td colspan="6" class="text-center text-muted py-4">ยังไม่มีงานแข่งขัน</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

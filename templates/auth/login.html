@@ -7,12 +7,22 @@
     <h4 class="text-center mb-1">เข้าสู่ระบบ</h4>
     <p class="text-center text-muted mb-4">ระบบกีฬาสี / กีฬาเครือข่าย / องค์กร</p>
     <form method="post">
-      <label class="form-label">Email</label>
-      <input class="form-control mb-3" name="email" type="email" required>
+      <label class="form-label">Email / ID</label>
+      <input class="form-control mb-3" name="email" type="text" placeholder="เช่น superadmin หรือ email" required>
       <label class="form-label">Password</label>
       <input class="form-control mb-4" name="password" type="password" required>
       <button class="btn btn-primary w-100">Login</button>
     </form>
+    <div class="my-3 text-center text-muted small">หรือเข้าสู่ระบบด้วย</div>
+    <div class="d-grid gap-2">
+      {% for p in oauth_providers %}
+        {% if p.ready %}
+          <a class="btn btn-outline-dark" href="{{ url_for('social_login', provider=p.code) }}"><i class="bi {{ p.icon }}"></i> {{ p.label }}</a>
+        {% else %}
+          <button class="btn btn-outline-secondary" type="button" disabled><i class="bi {{ p.icon }}"></i> {{ p.label }} ยังไม่ตั้งค่า</button>
+        {% endif %}
+      {% endfor %}
+    </div>
     <div class="text-center mt-3"><a href="{{ url_for('register') }}">สมัครสมาชิกใหม่</a></div>
   </div>
 </div>

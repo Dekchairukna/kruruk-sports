@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% block page_title %}สถานะชำระเงิน · {{ trx.invoice.invoice_no }}{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-lg-7">
+  <div class="card soft-card"><div class="card-body text-center p-4">
+    <div class="text-muted small">{{ trx.gateway|upper }}</div>
+    <h3>{{ trx.invoice.title }}</h3>
+    <div class="display-6 my-3">{{ '%.2f'|format(trx.amount) }} {{ trx.currency }}</div>
+    <span class="badge {{ 'bg-success' if trx.status=='paid' else 'bg-warning text-dark' if trx.status=='pending' else 'bg-secondary' }}">{{ trx.status }}</span>
+    {% if trx.gateway == 'promptpay' and trx.qr_payload %}
+      <div class="mt-4">
+        <img class="img-fluid border rounded p-2 bg-white" style="max-width:260px" src="https://promptpay.io/{{ config.PROMPTPAY_ID }}/{{ '%.2f'|format(trx.amount) }}.png" alt="PromptPay QR">
+        <div class="text-muted small mt-2">PromptPay ID: {{ config.PROMPTPAY_ID }}</div>
+        <div class="alert alert-warning mt-3 text-start">หลังโอนแล้วให้แจ้งเลขอ้างอิง หรือให้ Super Admin กด “ยืนยันชำระเงิน” เพื่อเปิดใช้งานแพ็กเกจ</div>
+      </div>
+    {% endif %}
+    <div class="mt-4 d-flex justify-content-center gap-2 flex-wrap">
+      <a class="btn btn-light" href="{{ url_for('invoice_pay', invoice_id=trx.invoice_id) }}">กลับหน้าชำระเงิน</a>
+      <a class="btn btn-outline-dark" href="{{ url_for('organizations_billing', org_id=trx.invoice.organization_id) }}">กลับ Billing</a>
+      {% if current_user.is_superadmin and trx.status != 'paid' %}
+      <form method="post" action="{{ url_for('admin_payment_mark_paid', transaction_id=trx.id) }}"><button class="btn btn-success">ยืนยันชำระเงิน</button></form>
+      {% endif %}
+    </div>
+    {% if trx.raw_response %}<details class="text-start mt-4"><summary>Raw response</summary><pre class="small bg-light p-3 rounded">{{ trx.raw_response }}</pre></details>{% endif %}
+  </div></div>
+</div></div>
+{% endblock %}

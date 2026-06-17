@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% block title %}Login · KRURUK SPORTS{% endblock %}
+{% block auth_content %}
+<div class="auth-page">
+  <div class="auth-card">
+    <div class="brand justify-content-center mb-4"><span class="brand-mark">KS</span><div><b>KRURUK</b><small>SPORTS</small></div></div>
+    <h4 class="text-center mb-1">เข้าสู่ระบบ</h4>
+    <p class="text-center text-muted mb-4">ระบบกีฬาสี / กีฬาเครือข่าย / องค์กร</p>
+    <div class="d-grid gap-2 mb-3">
+      {% if social_login_enabled('google') %}<a class="btn btn-outline-danger" href="{{ url_for('auth_google') }}"><i class="bi bi-google"></i> เข้าสู่ระบบด้วย Google</a>{% endif %}
+      {% if social_login_enabled('line') %}<a class="btn btn-outline-success" href="{{ url_for('auth_line') }}"><i class="bi bi-chat-dots"></i> เข้าสู่ระบบด้วย LINE</a>{% endif %}
+    </div>
+    {% if social_login_enabled('google') or social_login_enabled('line') %}<div class="text-center text-muted small mb-3">หรือเข้าสู่ระบบด้วยอีเมล</div>{% endif %}
+    <form method="post">
+      <label class="form-label">Email</label>
+      <input class="form-control mb-3" name="email" type="email" required>
+      <label class="form-label">Password</label>
+      <input class="form-control mb-4" name="password" type="password" required>
+      <button class="btn btn-primary w-100">Login</button>
+    </form>
+    <div class="text-center mt-3"><a href="{{ url_for('register') }}">สมัครสมาชิกใหม่</a></div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+{% block page_title %}เลือกองค์กรสำหรับ Billing{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div><h4 class="mb-0">เลือกองค์กรสำหรับ Billing</h4><div class="text-muted small">ถ้ายังไม่มี active organization ให้เลือกจากรายการนี้</div></div>
+  <a class="btn btn-primary" href="{{ url_for('organization_new') }}">+ สร้างองค์กร</a>
+</div>
+<div class="row g-3">
+{% for org in organizations %}
+  <div class="col-md-6 col-xl-4"><div class="card soft-card h-100"><div class="card-body">
+    <h5>{{ org.name }}</h5>
+    <div class="text-muted small mb-3">{{ org.org_type }}</div>
+    <a class="btn btn-primary btn-sm" href="{{ url_for('organizations_billing', org_id=org.id) }}">เปิด Billing</a>
+  </div></div></div>
+{% else %}<div class="col-12"><div class="empty-box">ยังไม่มีองค์กร</div></div>{% endfor %}
+</div>
+{% endblock %}

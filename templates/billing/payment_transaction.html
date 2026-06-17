@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block page_title %}Payment · {{ txn.invoice.invoice_no }}{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-lg-7">
+  <div class="card soft-card"><div class="card-body text-center">
+    <div class="text-muted small">รายการชำระเงิน</div>
+    <h3>{{ txn.invoice.title }}</h3>
+    <h1 class="my-3">{{ '%.2f'|format(txn.amount) }} {{ txn.currency }}</h1>
+    <div class="mb-3"><span class="badge bg-primary">{{ txn.gateway|upper }}</span> <span class="badge {{ 'bg-success' if txn.status=='paid' else 'bg-warning text-dark' }}">{{ txn.status }}</span></div>
+    {% if txn.gateway == 'promptpay' %}
+      {% if qr_data %}
+        <div class="mb-3">
+          <img src="{{ qr_data }}" class="img-fluid border rounded p-2 bg-white" style="max-width:320px" alt="PromptPay QR">
+        </div>
+        <a class="btn btn-outline-primary btn-sm" target="_blank" href="{{ url_for('payment_promptpay_qr_png', txn_id=txn.id) }}">เปิด QR เต็มจอ</a>
+      {% else %}
+        <div class="alert alert-danger text-start">
+          <b>ยังสร้าง QR ไม่สำเร็จ</b><br>
+          {{ qr_error or 'ไม่ทราบสาเหตุ' }}<br>
+          <span class="small">ให้รันคำสั่ง <code>pip install -r requirements.txt</code> หรือ <code>pip install qrcode[pil] Pillow</code> แล้วปิดเปิด Flask ใหม่</span>
+        </div>
+        <div class="text-start small text-muted mb-2">Payload สำหรับตรวจสอบ:</div>
+        <pre class="text-start bg-light p-3 rounded small text-break">{{ txn.qr_payload }}</pre>
+      {% endif %}
+      <p class="text-muted mt-3">สแกนจ่าย PromptPay แล้วให้ Super Admin ตรวจหลักฐานและกดรับชำระ</p>
+    {% elif txn.gateway == 'manual' %}
+      <p class="text-muted">ชำระเงินนอกระบบ/โอนเงิน แล้วให้ Super Admin กดรับชำระ</p>
+    {% elif txn.checkout_url %}
+      <a class="btn btn-primary" href="{{ txn.checkout_url }}">ไปหน้าชำระเงิน</a>
+    {% endif %}
+    <div class="small text-muted mt-3">Ref: {{ txn.provider_reference }}</div>
+    <div class="d-flex justify-content-center gap-2 mt-4">
+      <a class="btn btn-outline-secondary" href="{{ url_for('organizations_billing', org_id=txn.organization_id) }}">กลับ Billing</a>
+      <a class="btn btn-outline-dark" target="_blank" href="{{ url_for('invoice_print', invoice_id=txn.invoice_id) }}">พิมพ์ใบแจ้งหนี้</a>
+      {% if current_user.is_superadmin and txn.status != 'paid' %}<form method="post" action="{{ url_for('payment_mark_paid', txn_id=txn.id) }}"><button class="btn btn-success">รับชำระ</button></form>{% endif %}
+    </div>
+  </div></div>
+</div></div>
+{% endblock %}

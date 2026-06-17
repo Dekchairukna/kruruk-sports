@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+{% block page_title %}Round Robin · {{ event.name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h4 class="mb-0">ระบบ Round Robin</h4>
+    <div class="text-muted small">แบ่งกลุ่ม พบกันหมด ตั้งค่าคะแนน/Tie-break และเลือกทีมเข้ารอบ</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-light" href="{{ url_for('event_detail', event_id=event.id) }}">กลับหน้างาน</a>
+    <a class="btn btn-primary" href="{{ url_for('rr_new', event_id=event.id) }}"><i class="bi bi-plus-circle"></i> สร้าง Round Robin</a>
+  </div>
+</div>
+<div class="row g-3">
+  {% for comp in competitions %}
+  <div class="col-md-6 col-xl-4">
+    <div class="card soft-card h-100">
+      <div class="card-body">
+        <div class="d-flex justify-content-between gap-2">
+          <h5>{{ comp.name }}</h5>
+          <span class="badge bg-secondary">{{ comp.status }}</span>
+        </div>
+        <div class="text-muted small mb-2">{{ comp.sport_division.label if comp.sport_division else 'ไม่ผูกกีฬา' }}</div>
+        <div class="row text-center g-2 my-2">
+          <div class="col"><div class="stat-mini">{{ comp.num_groups }}<small>กลุ่ม</small></div></div>
+          <div class="col"><div class="stat-mini">{{ comp.advance_per_group }}<small>เข้ารอบ/กลุ่ม</small></div></div>
+          <div class="col"><div class="stat-mini">{{ comp.best_runnerup_count }}<small>Best RU</small></div></div>
+        </div>
+        <div class="small text-muted">ชนะ {{ comp.win_points }} · เสมอ {{ comp.draw_points }} · แพ้ {{ comp.loss_points }}</div>
+        <div class="d-flex flex-wrap gap-2 mt-3">
+          <a class="btn btn-sm btn-primary" href="{{ url_for('rr_detail', comp_id=comp.id) }}">เปิดรายการ</a>
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('rr_assign', comp_id=comp.id) }}">จัดกลุ่ม</a>
+          <form method="post" action="{{ url_for('rr_delete', comp_id=comp.id) }}" onsubmit="return confirm('ลบรายการนี้?')"><button class="btn btn-sm btn-outline-danger">ลบ</button></form>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="col-12"><div class="empty-box">ยังไม่มีรายการ Round Robin</div></div>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 from extensions import db, login_manager
@@ -9,7 +9,12 @@ class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), nullable=False)
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    username = db.Column(db.String(80), unique=True, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
+    avatar_url = db.Column(db.String(500))
+    social_provider = db.Column(db.String(40))
+    social_id = db.Column(db.String(255), index=True)
+    last_login_at = db.Column(db.DateTime)
     role = db.Column(db.String(40), default="organization_admin", nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -41,6 +46,9 @@ class Organization(db.Model):
 
     members = db.relationship("OrganizationMember", back_populates="organization", cascade="all, delete-orphan")
     events = db.relationship("Event", back_populates="organization", cascade="all, delete-orphan")
+    subscriptions = db.relationship("OrganizationSubscription", back_populates="organization", cascade="all, delete-orphan")
+    invoices = db.relationship("Invoice", back_populates="organization", cascade="all, delete-orphan")
+    payment_transactions = db.relationship("PaymentTransaction", back_populates="organization", cascade="all, delete-orphan")
 
 
 class OrganizationMember(db.Model):
@@ -55,6 +63,128 @@ class OrganizationMember(db.Model):
     organization = db.relationship("Organization", back_populates="members")
 
     __table_args__ = (db.UniqueConstraint("user_id", "organization_id", name="uq_user_organization"),)
+
+
+
+
+class SubscriptionPlan(db.Model):
+    __tablename__ = "subscription_plans"
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(40), unique=True, nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    description = db.Column(db.Text)
+    price = db.Column(db.Float, default=0, nullable=False)
+    currency = db.Column(db.String(10), default="THB", nullable=False)
+    billing_period = db.Column(db.String(40), default="monthly", nullable=False)
+    duration_days = db.Column(db.Integer, default=30, nullable=False)
+
+    max_events = db.Column(db.Integer, default=1, nullable=False)              # -1 = ไม่จำกัด
+    max_teams_per_event = db.Column(db.Integer, default=4, nullable=False)     # -1 = ไม่จำกัด
+    max_athletes_per_event = db.Column(db.Integer, default=100, nullable=False)# -1 = ไม่จำกัด
+    allow_live_board = db.Column(db.Boolean, default=False, nullable=False)
+    allow_certificates = db.Column(db.Boolean, default=False, nullable=False)
+    allow_reports_pdf = db.Column(db.Boolean, default=False, nullable=False)
+
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    sort_order = db.Column(db.Integer, default=0, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    subscriptions = db.relationship("OrganizationSubscription", back_populates="plan")
+
+    def limit_text(self, value):
+        return "ไม่จำกัด" if value is None or value < 0 else str(value)
+
+
+class OrganizationSubscription(db.Model):
+    __tablename__ = "organization_subscriptions"
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False, index=True)
+    plan_id = db.Column(db.Integer, db.ForeignKey("subscription_plans.id"), nullable=False, index=True)
+    status = db.Column(db.String(40), default="active", nullable=False)  # active, pending_payment, expired, cancelled
+    start_date = db.Column(db.Date, default=date.today, nullable=False)
+    end_date = db.Column(db.Date)
+    manual_payment_note = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    organization = db.relationship("Organization", back_populates="subscriptions")
+    plan = db.relationship("SubscriptionPlan", back_populates="subscriptions")
+    invoices = db.relationship("Invoice", back_populates="subscription", cascade="all, delete-orphan")
+
+    @property
+    def is_current(self):
+        if self.status != "active":
+            return False
+        if self.end_date and self.end_date < date.today():
+            return False
+        return True
+
+
+class Invoice(db.Model):
+    __tablename__ = "invoices"
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False, index=True)
+    subscription_id = db.Column(db.Integer, db.ForeignKey("organization_subscriptions.id"), nullable=True, index=True)
+    invoice_no = db.Column(db.String(80), unique=True, nullable=False, index=True)
+    title = db.Column(db.String(180), default="Subscription Invoice", nullable=False)
+    amount = db.Column(db.Float, default=0, nullable=False)
+    currency = db.Column(db.String(10), default="THB", nullable=False)
+    status = db.Column(db.String(40), default="unpaid", nullable=False)  # unpaid, paid, cancelled
+    due_date = db.Column(db.Date)
+    paid_at = db.Column(db.DateTime)
+    payment_method = db.Column(db.String(80), default="manual")
+    gateway_reference = db.Column(db.String(255))
+    payment_url = db.Column(db.Text)
+    note = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    organization = db.relationship("Organization", back_populates="invoices")
+    subscription = db.relationship("OrganizationSubscription", back_populates="invoices")
+    transactions = db.relationship("PaymentTransaction", back_populates="invoice", cascade="all, delete-orphan")
+
+
+class OAuthAccount(db.Model):
+    __tablename__ = "oauth_accounts"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    provider = db.Column(db.String(40), nullable=False, index=True)
+    provider_user_id = db.Column(db.String(255), nullable=False, index=True)
+    email = db.Column(db.String(255), index=True)
+    name = db.Column(db.String(180))
+    avatar_url = db.Column(db.String(500))
+    access_token = db.Column(db.Text)
+    refresh_token = db.Column(db.Text)
+    token_expires_at = db.Column(db.DateTime)
+    raw_profile = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = db.relationship("User", backref=db.backref("oauth_accounts", cascade="all, delete-orphan"))
+
+    __table_args__ = (db.UniqueConstraint("provider", "provider_user_id", name="uq_oauth_provider_user"),)
+
+
+class PaymentTransaction(db.Model):
+    __tablename__ = "payment_transactions"
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False, index=True)
+    invoice_id = db.Column(db.Integer, db.ForeignKey("invoices.id"), nullable=False, index=True)
+    gateway = db.Column(db.String(40), nullable=False, default="manual")  # manual, promptpay, stripe, omise
+    amount = db.Column(db.Float, default=0, nullable=False)
+    currency = db.Column(db.String(10), default="THB", nullable=False)
+    status = db.Column(db.String(40), default="pending", nullable=False)  # pending, paid, failed, cancelled
+    provider_reference = db.Column(db.String(255), index=True)
+    checkout_url = db.Column(db.Text)
+    qr_payload = db.Column(db.Text)
+    note = db.Column(db.Text)
+    raw_response = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    paid_at = db.Column(db.DateTime)
+
+    organization = db.relationship("Organization", back_populates="payment_transactions")
+    invoice = db.relationship("Invoice", back_populates="transactions")
 
 
 class Event(db.Model):
@@ -331,6 +461,7 @@ class RoundRobinMatch(db.Model):
     set_a = db.Column(db.Integer)
     set_b = db.Column(db.Integer)
     set_scores = db.Column(db.Text)  # JSON: [{"a":25,"b":18}, ...]
+    score_history = db.Column(db.Text)  # JSON point-by-point history from quick score UI
     point_diff = db.Column(db.Integer, default=0)
     status = db.Column(db.String(40), default="scheduled", nullable=False)
     note = db.Column(db.Text)
@@ -340,6 +471,54 @@ class RoundRobinMatch(db.Model):
     group = db.relationship("RoundRobinGroup")
     team_a = db.relationship("Team", foreign_keys=[team_a_id])
     team_b = db.relationship("Team", foreign_keys=[team_b_id])
+
+
+
+class KnockoutCompetition(db.Model):
+    __tablename__ = "knockout_competitions"
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("events.id"), nullable=False, index=True)
+    sport_division_id = db.Column(db.Integer, db.ForeignKey("sport_divisions.id"), nullable=True, index=True)
+    source_round_robin_id = db.Column(db.Integer, db.ForeignKey("round_robin_competitions.id"), nullable=True, index=True)
+    name = db.Column(db.String(220), nullable=False)
+    result_type = db.Column(db.String(30), default="score_only", nullable=False)
+    max_sets = db.Column(db.Integer, default=0, nullable=False)
+    points_per_set = db.Column(db.Integer, default=0, nullable=False)
+    sets_to_win = db.Column(db.Integer, default=0, nullable=False)
+    status = db.Column(db.String(40), nullable=False, default="draft")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    event = db.relationship("Event", backref=db.backref("knockout_competitions", cascade="all, delete-orphan"))
+    sport_division = db.relationship("SportDivision")
+    source_round_robin = db.relationship("RoundRobinCompetition")
+    matches = db.relationship("KnockoutMatch", back_populates="competition", cascade="all, delete-orphan", order_by="(KnockoutMatch.round_no, KnockoutMatch.match_no)")
+
+
+class KnockoutMatch(db.Model):
+    __tablename__ = "knockout_matches"
+    id = db.Column(db.Integer, primary_key=True)
+    competition_id = db.Column(db.Integer, db.ForeignKey("knockout_competitions.id"), nullable=False, index=True)
+    round_no = db.Column(db.Integer, default=1, nullable=False)
+    round_name = db.Column(db.String(80), nullable=False, default="รอบแรก")
+    match_no = db.Column(db.Integer, default=1, nullable=False)
+    team_a_id = db.Column(db.Integer, db.ForeignKey("teams.id"), nullable=True)
+    team_b_id = db.Column(db.Integer, db.ForeignKey("teams.id"), nullable=True)
+    score_a = db.Column(db.Integer)
+    score_b = db.Column(db.Integer)
+    set_a = db.Column(db.Integer)
+    set_b = db.Column(db.Integer)
+    set_scores = db.Column(db.Text)
+    score_history = db.Column(db.Text)
+    point_diff = db.Column(db.Integer, default=0)
+    winner_team_id = db.Column(db.Integer, db.ForeignKey("teams.id"), nullable=True)
+    status = db.Column(db.String(40), nullable=False, default="scheduled")
+    note = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    competition = db.relationship("KnockoutCompetition", back_populates="matches")
+    team_a = db.relationship("Team", foreign_keys=[team_a_id])
+    team_b = db.relationship("Team", foreign_keys=[team_b_id])
+    winner_team = db.relationship("Team", foreign_keys=[winner_team_id])
 
 
 class RankingCompetition(db.Model):

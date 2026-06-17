@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+{% block page_title %}{{ 'แก้ไขงานแข่งขัน' if event else 'สร้างงานแข่งขัน' }}{% endblock %}
+{% block content %}
+<div class="card soft-card"><div class="card-body">
+<form method="post" enctype="multipart/form-data">
+  <div class="row g-3">
+    <div class="col-md-6"><label class="form-label">องค์กร</label><select class="form-select" name="organization_id" required>{% for org in orgs %}<option value="{{ org.id }}" {{ 'selected' if event and event.organization_id==org.id else '' }}>{{ org.name }}</option>{% endfor %}</select></div>
+    <div class="col-md-6"><label class="form-label">ชื่องานแข่งขัน</label><input class="form-control" name="name" value="{{ event.name if event else '' }}" required></div>
+    <div class="col-md-3"><label class="form-label">ปีการศึกษา/ปีแข่งขัน</label><input class="form-control" name="competition_year" value="{{ event.competition_year if event else '' }}"></div>
+    <div class="col-md-3"><label class="form-label">วันที่เริ่ม</label><input class="form-control" name="start_date" type="date" value="{{ event.start_date if event and event.start_date else '' }}"></div>
+    <div class="col-md-3"><label class="form-label">วันที่สิ้นสุด</label><input class="form-control" name="end_date" type="date" value="{{ event.end_date if event and event.end_date else '' }}"></div>
+    <div class="col-md-3"><label class="form-label">สถานะ</label><select class="form-select" name="status">{% for s in ['draft','open','closed','archived'] %}<option value="{{ s }}" {{ 'selected' if event and event.status==s else '' }}>{{ s }}</option>{% endfor %}</select></div>
+    <div class="col-md-8"><label class="form-label">สถานที่</label><input class="form-control" name="location" value="{{ event.location if event else '' }}"></div>
+    <div class="col-md-4"><label class="form-label">สีธีมงาน</label><input class="form-control form-control-color w-100" name="theme_color" type="color" value="{{ event.theme_color if event else '#4f46e5' }}"></div>
+    <div class="col-md-12"><label class="form-label">โลโก้งาน</label><input class="form-control" name="logo" type="file" accept="image/*"></div>
+  </div>
+  <button class="btn btn-primary mt-4">บันทึก</button>
+  <a class="btn btn-light mt-4" href="{{ url_for('events') }}">กลับ</a>
+</form>
+</div></div>
+{% endblock %}

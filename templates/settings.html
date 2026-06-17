@@ -1,8 +1,58 @@
 {% extends 'base.html' %}
 {% block page_title %}Settings{% endblock %}
 {% block content %}
-<div class="card soft-card"><div class="card-body">
-  <h5>ตั้งค่าระบบ</h5>
-  <p class="text-muted mb-0">เฟส 0 เตรียมหน้า Settings ไว้สำหรับต่อยอดระบบสมาชิก แพ็กเกจ ภาษา และการตั้งค่าองค์กรในเฟสถัดไป</p>
-</div></div>
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card soft-card mb-3"><div class="card-body">
+      <h4 class="mb-1">ตั้งค่าระบบ</h4>
+      <div class="text-muted">เลือกงานปัจจุบันก่อน แล้วเมนู Teams / Sport Setup / Billing จะไม่เด้งกลับหน้าเดิม</div>
+      <hr>
+      <form method="post" action="{{ url_for('settings_active_event') }}" class="row g-2 align-items-end">
+        <div class="col-md-8">
+          <label class="form-label">งานแข่งขันปัจจุบัน</label>
+          <select class="form-select" name="event_id">
+            <option value="">-- ยังไม่เลือกงาน --</option>
+            {% for e in events %}<option value="{{ e.id }}" {{ 'selected' if active_event and active_event.id==e.id else '' }}>{{ e.name }} · {{ e.organization.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-4"><button class="btn btn-primary w-100">บันทึกงานปัจจุบัน</button></div>
+      </form>
+    </div></div>
+    <div class="card soft-card"><div class="card-body">
+      <h5>ทางลัดจัดการระบบ</h5>
+      <div class="d-flex flex-wrap gap-2">
+        {% if active_event %}
+          <a class="btn btn-outline-primary" href="{{ url_for('event_detail', event_id=active_event.id) }}#teams-section">Teams / Colors</a>
+          <a class="btn btn-warning" href="{{ url_for('event_sports', event_id=active_event.id) }}">Sport Setup</a>
+          <a class="btn btn-outline-info" href="{{ url_for('event_round_robin', event_id=active_event.id) }}">Round Robin</a>
+          <a class="btn btn-outline-secondary" href="{{ url_for('event_knockout', event_id=active_event.id) }}">Knockout</a>
+          <a class="btn btn-outline-dark" href="{{ url_for('event_reports', event_id=active_event.id) }}">Reports</a>
+        {% else %}
+          <a class="btn btn-primary" href="{{ url_for('events') }}">ไปเลือกงานแข่งขัน</a>
+          <a class="btn btn-outline-warning" href="{{ url_for('sport_setup_home') }}">เลือกงานเพื่อ Sport Setup</a>
+        {% endif %}
+        {% if active_org %}<a class="btn btn-outline-success" href="{{ url_for('organizations_billing', org_id=active_org.id) }}">Billing</a>{% endif %}
+        {% if current_user.is_superadmin %}<a class="btn btn-outline-primary" href="{{ url_for('admin_subscription_plans') }}">Packages</a>{% endif %}
+      </div>
+    </div></div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card soft-card mb-3"><div class="card-body">
+      <h5>สถานะปัจจุบัน</h5>
+      <div class="small text-muted">User</div><div class="mb-2"><b>{{ current_user.name }}</b></div>
+      <div class="small text-muted">Active Event</div><div class="mb-2"><b>{{ active_event.name if active_event else 'ยังไม่ได้เลือก' }}</b></div>
+      <div class="small text-muted">Active Organization</div><div><b>{{ active_org.name if active_org else 'ยังไม่ได้เลือก' }}</b></div>
+    </div></div>
+    <div class="card soft-card"><div class="card-body">
+      <h5>รายการงานล่าสุด</h5>
+      {% for e in events[:6] %}
+        <form method="post" action="{{ url_for('settings_active_event') }}" class="d-flex justify-content-between align-items-center border-bottom py-2">
+          <input type="hidden" name="event_id" value="{{ e.id }}">
+          <span class="small">{{ e.name }}</span>
+          <button class="btn btn-sm btn-outline-primary">เลือก</button>
+        </form>
+      {% else %}<div class="text-muted small">ยังไม่มีงาน</div>{% endfor %}
+    </div></div>
+  </div>
+</div>
 {% endblock %}

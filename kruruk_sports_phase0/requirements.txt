@@ -1,0 +1,17 @@
+blinker==1.9.0
+click==8.4.1
+et_xmlfile==2.0.0
+Flask==3.0.3
+Flask-Login==0.6.3
+Flask-SQLAlchemy==3.1.1
+itsdangerous==2.2.0
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+openpyxl==3.1.5
+psycopg2-binary==2.9.9
+python-dotenv==1.0.1
+SQLAlchemy==2.0.51
+typing_extensions==4.15.0
+Werkzeug==3.0.3
+
+requests==2.32.5

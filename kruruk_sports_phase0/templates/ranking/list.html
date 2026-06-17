@@ -1,0 +1,38 @@
+{% extends 'base.html' %}
+{% block page_title %}Ranking Competition{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h4 class="mb-0">Ranking Competition</h4>
+    <div class="text-muted">{{ event.name }} · ใช้กับกรีฑา/กีฬาพื้นบ้าน/รายการวัดเวลา-ระยะ-อันดับ</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{{ url_for('event_detail', event_id=event.id) }}">กลับหน้างาน</a>
+    <a class="btn btn-primary" href="{{ url_for('ranking_new', event_id=event.id) }}"><i class="bi bi-plus-circle"></i> สร้างรายการ Ranking</a>
+  </div>
+</div>
+<div class="card soft-card">
+  <div class="table-responsive">
+    <table class="table align-middle mb-0">
+      <thead><tr><th>รายการ</th><th>กีฬา/รุ่น/เพศ</th><th>รูปแบบผล</th><th>สถานะ</th><th class="text-end">จัดการ</th></tr></thead>
+      <tbody>
+      {% for c in competitions %}
+      <tr>
+        <td><b>{{ c.name }}</b></td>
+        <td>{{ c.sport_division.label if c.sport_division else '-' }}</td>
+        <td>{{ {'rank':'อันดับ','time':'เวลา','distance':'ระยะ','score':'คะแนน'}.get(c.result_mode, c.result_mode) }}</td>
+        <td><span class="badge bg-secondary">{{ c.status }}</span></td>
+        <td class="text-end">
+          <a class="btn btn-sm btn-primary" href="{{ url_for('ranking_detail', comp_id=c.id) }}">บันทึกผล</a>
+          <a class="btn btn-sm btn-outline-success" href="{{ url_for('ranking_export_excel', comp_id=c.id) }}">Excel</a>
+          <form method="post" action="{{ url_for('ranking_delete', comp_id=c.id) }}" class="d-inline" onsubmit="return confirm('ลบรายการนี้?')"><button class="btn btn-sm btn-outline-danger">ลบ</button></form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="text-center text-muted py-4">ยังไม่มีรายการ Ranking</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

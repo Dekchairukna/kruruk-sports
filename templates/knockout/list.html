@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block page_title %}Knockout · {{ event.name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div><h4 class="mb-0">รายการ Knockout</h4><div class="text-muted small">สร้างต่อจาก Round Robin หรือใช้เป็นรอบตัดเชือก</div></div>
+  <a class="btn btn-light" href="{{ url_for('event_detail', event_id=event.id) }}">กลับงานแข่งขัน</a>
+</div>
+<div class="card soft-card"><div class="table-responsive"><table class="table align-middle mb-0">
+  <thead><tr><th>รายการ</th><th>กีฬา/รุ่น</th><th>บันทึกผล</th><th>สถานะ</th><th></th></tr></thead>
+  <tbody>{% for c in competitions %}<tr>
+    <td><b>{{ c.name }}</b><div class="text-muted small">{{ c.created_at.strftime('%d/%m/%Y %H:%M') if c.created_at else '' }}</div></td>
+    <td>{{ c.sport_division.label if c.sport_division else '-' }}</td>
+    <td>{{ c.result_type }}{% if c.result_type=='set_based' %} · {{ c.max_sets }} เซต ชนะ {{ c.sets_to_win }}{% endif %}</td>
+    <td><span class="badge bg-light text-dark">{{ c.status }}</span></td>
+    <td class="text-end"><a class="btn btn-sm btn-primary" href="{{ url_for('knockout_detail', comp_id=c.id) }}">เปิด</a></td>
+  </tr>{% else %}<tr><td colspan="5"><div class="empty-box">ยังไม่มีรายการ Knockout</div></td></tr>{% endfor %}</tbody>
+</table></div></div>
+{% endblock %}

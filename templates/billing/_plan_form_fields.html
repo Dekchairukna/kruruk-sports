@@ -1,0 +1,18 @@
+<div class="row g-3">
+  <div class="col-md-3"><label class="form-label">รหัสแพ็กเกจ</label><input class="form-control" name="code" value="{{ plan.code if plan else '' }}" {{ 'readonly' if plan else '' }} placeholder="basic"></div>
+  <div class="col-md-3"><label class="form-label">ชื่อแพ็กเกจ</label><input class="form-control" name="name" value="{{ plan.name if plan else '' }}" required></div>
+  <div class="col-md-2"><label class="form-label">ราคา</label><input class="form-control" type="number" step="0.01" name="price" value="{{ plan.price if plan else 0 }}"></div>
+  <div class="col-md-2"><label class="form-label">รอบบิล</label><input class="form-control" name="billing_period" value="{{ plan.billing_period if plan else 'monthly' }}"></div>
+  <div class="col-md-2"><label class="form-label">จำนวนวัน</label><input class="form-control" type="number" name="duration_days" value="{{ plan.duration_days if plan else 30 }}"></div>
+  <div class="col-md-3"><label class="form-label">จำนวนงานแข่งขัน</label><input class="form-control" type="number" name="max_events" value="{{ plan.max_events if plan else 1 }}"><div class="form-text">ใส่ -1 = ไม่จำกัด</div></div>
+  <div class="col-md-3"><label class="form-label">จำนวนทีม/งาน</label><input class="form-control" type="number" name="max_teams_per_event" value="{{ plan.max_teams_per_event if plan else 4 }}"><div class="form-text">ใส่ -1 = ไม่จำกัด</div></div>
+  <div class="col-md-3"><label class="form-label">จำนวนนักกีฬา/งาน</label><input class="form-control" type="number" name="max_athletes_per_event" value="{{ plan.max_athletes_per_event if plan else 100 }}"><div class="form-text">ใส่ -1 = ไม่จำกัด</div></div>
+  <div class="col-md-3"><label class="form-label">ลำดับ</label><input class="form-control" type="number" name="sort_order" value="{{ plan.sort_order if plan else 0 }}"></div>
+  <div class="col-12"><label class="form-label">รายละเอียด</label><textarea class="form-control" name="description" rows="2">{{ plan.description if plan else '' }}</textarea></div>
+  <div class="col-12 d-flex flex-wrap gap-4">
+    <label class="form-check"><input class="form-check-input" type="checkbox" name="allow_live_board" value="1" {{ 'checked' if plan and plan.allow_live_board else '' }}> Live Board</label>
+    <label class="form-check"><input class="form-check-input" type="checkbox" name="allow_certificates" value="1" {{ 'checked' if plan and plan.allow_certificates else '' }}> Certificate</label>
+    <label class="form-check"><input class="form-check-input" type="checkbox" name="allow_reports_pdf" value="1" {{ 'checked' if plan and plan.allow_reports_pdf else '' }}> Reports PDF</label>
+    <label class="form-check"><input class="form-check-input" type="checkbox" name="is_active" value="1" {{ 'checked' if not plan or plan.is_active else '' }}> เปิดใช้งานแพ็กเกจ</label>
+  </div>
+</div>

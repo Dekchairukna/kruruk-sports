@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block page_title %}สร้างกิจกรรมประกวด{% endblock %}
+{% block content %}
+<div class="card soft-card"><div class="card-body">
+<form method="post">
+  <div class="row g-3">
+    <div class="col-md-6"><label class="form-label">ชื่อกิจกรรม</label><input class="form-control" name="name" placeholder="เช่น ขบวนพาเหรด"></div>
+    <div class="col-md-6"><label class="form-label">ประเภทกิจกรรม</label><select class="form-select" name="activity_type">
+      {% for x in ['ขบวนพาเหรด','กองเชียร์','สแตนด์เชียร์','เชียร์ลีดเดอร์','ความสะอาด','ระเบียบวินัย','กิจกรรมประกวด'] %}<option>{{ x }}</option>{% endfor %}
+    </select></div>
+    <div class="col-12"><label class="form-label">ผูกกับ Sport Setup (ไม่บังคับ)</label><select class="form-select" name="sport_division_id"><option value="">ไม่ผูกกับกีฬา/รุ่น/เพศ</option>{% for d in divisions %}<option value="{{ d.id }}">{{ d.label }}</option>{% endfor %}</select></div>
+    <div class="col-md-6"><label class="form-label">เกณฑ์คะแนน บรรทัดละ 1 เกณฑ์</label><textarea class="form-control" name="criteria" rows="8" placeholder="ความคิดสร้างสรรค์|100&#10;ความสวยงาม|100&#10;ความพร้อมเพรียง|100"></textarea><div class="form-text">รูปแบบ: ชื่อเกณฑ์|คะแนนเต็ม</div></div>
+    <div class="col-md-6"><label class="form-label">รายชื่อกรรมการ บรรทัดละ 1 คน</label><textarea class="form-control" name="judges" rows="8" placeholder="กรรมการ 1&#10;กรรมการ 2&#10;กรรมการ 3"></textarea></div>
+  </div>
+  <div class="mt-4 d-flex gap-2"><button class="btn btn-primary">สร้างกิจกรรม</button><a class="btn btn-outline-secondary" href="{{ url_for('event_contests', event_id=event.id) }}">ยกเลิก</a></div>
+</form>
+</div></div>
+{% endblock %}

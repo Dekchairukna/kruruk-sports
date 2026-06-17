@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+{% block title %}Register · KRURUK SPORTS{% endblock %}
+{% block auth_content %}
+<div class="auth-page">
+  <div class="auth-card wide">
+    <div class="brand justify-content-center mb-4"><span class="brand-mark">KS</span><div><b>KRURUK</b><small>SPORTS</small></div></div>
+    <h4 class="text-center mb-4">สมัครใช้งาน</h4>
+    <form method="post">
+      <div class="row g-3">
+        <div class="col-md-6"><label class="form-label">ชื่อผู้ใช้</label><input class="form-control" name="name" required></div>
+        <div class="col-md-6"><label class="form-label">Email</label><input class="form-control" name="email" type="email" required></div>
+        <div class="col-md-6"><label class="form-label">Password</label><input class="form-control" name="password" type="password" required></div>
+        <div class="col-md-6"><label class="form-label">ชื่อองค์กร</label><input class="form-control" name="org_name" required></div>
+        <div class="col-md-12"><label class="form-label">ประเภทองค์กร</label><select class="form-select" name="org_type"><option>โรงเรียน</option><option>อบต.</option><option>เทศบาล</option><option>เครือข่ายโรงเรียน</option><option>หน่วยงาน/องค์กร</option></select></div>
+      </div>
+      <button class="btn btn-primary w-100 mt-4">สมัครและสร้างองค์กร</button>
+    </form>
+    <div class="text-center mt-3"><a href="{{ url_for('login') }}">มีบัญชีแล้ว เข้าสู่ระบบ</a></div>
+  </div>
+</div>
+{% endblock %}
