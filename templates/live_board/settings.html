@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h2 class="mb-1">Live Board</h2>
+    <div class="text-muted">{{ event.name }}</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-primary" target="_blank" href="{{ url_for('event_live_board', event_id=event.id) }}">เปิดจอ Live</a>
+    <a class="btn btn-light" href="{{ url_for('event_detail', event_id=event.id) }}">กลับหน้างาน</a>
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm rounded-4">
+  <div class="card-body p-4">
+    <form method="post">
+      <div class="mb-3">
+        <label class="form-label fw-semibold">ข้อความวิ่ง</label>
+        <textarea name="marquee_text" class="form-control" rows="3" placeholder="ข้อความประชาสัมพันธ์บนจอใหญ่">{{ setting.marquee_text or '' }}</textarea>
+      </div>
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label fw-semibold">ธีม</label>
+          <select name="theme" class="form-select">
+            <option value="stadium" {% if setting.theme == 'stadium' %}selected{% endif %}>Stadium Dark</option>
+            <option value="clean" {% if setting.theme == 'clean' %}selected{% endif %}>Clean Light</option>
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label fw-semibold">Refresh ทุกกี่วินาที</label>
+          <input type="number" min="5" max="120" name="refresh_seconds" class="form-control" value="{{ setting.refresh_seconds or 10 }}">
+        </div>
+      </div>
+      <hr>
+      <div class="row g-2">
+        <div class="col-md-3"><label class="form-check"><input class="form-check-input" type="checkbox" name="show_medals" value="1" {% if setting.show_medals %}checked{% endif %}> <span class="form-check-label">ตารางเหรียญ</span></label></div>
+        <div class="col-md-3"><label class="form-check"><input class="form-check-input" type="checkbox" name="show_schedule" value="1" {% if setting.show_schedule %}checked{% endif %}> <span class="form-check-label">โปรแกรมแข่งขัน</span></label></div>
+        <div class="col-md-3"><label class="form-check"><input class="form-check-input" type="checkbox" name="show_results" value="1" {% if setting.show_results %}checked{% endif %}> <span class="form-check-label">ผลล่าสุด</span></label></div>
+        <div class="col-md-3"><label class="form-check"><input class="form-check-input" type="checkbox" name="show_rr_standings" value="1" {% if setting.show_rr_standings %}checked{% endif %}> <span class="form-check-label">ตาราง Round Robin</span></label></div>
+      </div>
+      <div class="mt-4 d-flex gap-2">
+        <button class="btn btn-primary">บันทึก</button>
+        <a class="btn btn-outline-secondary" target="_blank" href="{{ url_for('event_live_board_data', event_id=event.id) }}">ดู JSON Data</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

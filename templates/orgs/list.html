@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% block page_title %}Organizations{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="text-muted">จัดการองค์กรและหน่วยงาน</div>
+  <a class="btn btn-primary" href="{{ url_for('organization_new') }}">+ เพิ่มองค์กร</a>
+</div>
+<div class="row g-3">
+{% for org in organizations %}
+  <div class="col-md-4">
+    <div class="card soft-card h-100">
+      <div class="card-body">
+        <div class="org-logo mb-3">{% if org.logo %}<img src="{{ url_for('static', filename='uploads/' ~ org.logo) }}">{% else %}<i class="bi bi-building"></i>{% endif %}</div>
+        <h5>{{ org.name }}</h5>
+        <p class="text-muted mb-3">{{ org.org_type }}</p>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('organization_edit', org_id=org.id) }}">แก้ไข</a>
+      </div>
+    </div>
+  </div>
+{% else %}
+  <div class="col-12"><div class="empty-box">ยังไม่มีองค์กร</div></div>
+{% endfor %}
+</div>
+{% endblock %}

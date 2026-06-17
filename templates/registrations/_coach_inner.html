@@ -1,0 +1,13 @@
+<div class="card soft-card"><div class="card-body">
+  <h4>{{ 'แก้ไขผู้ฝึกสอน' if coach else 'เพิ่มผู้ฝึกสอน' }}</h4>
+  <div class="text-muted mb-3">ทีม: {{ team.name }} · งาน: {{ team.event.name }}</div>
+  <form method="post">
+    <div class="row g-3">
+      <div class="col-md-6"><label class="form-label">ชื่อ-สกุล</label><input class="form-control" name="full_name" value="{{ coach.full_name if coach else '' }}" required></div>
+      <div class="col-md-3"><label class="form-label">เบอร์โทร</label><input class="form-control" name="phone" value="{{ coach.phone if coach else '' }}"></div>
+      <div class="col-md-3"><label class="form-label">กีฬาที่รับผิดชอบ</label><input class="form-control" name="sport_responsibility" value="{{ coach.sport_responsibility if coach else '' }}" placeholder="เช่น ฟุตซอล, กรีฑา"></div>
+      <div class="col-12"><label class="form-label">หมายเหตุ</label><textarea class="form-control" name="note" rows="2">{{ coach.note if coach else '' }}</textarea></div>
+    </div>
+    <div class="mt-4 d-flex gap-2"><button class="btn btn-primary">บันทึก</button>{% if public_mode %}<a class="btn btn-light" href="{{ url_for('portal_athletes', team_id=team.id) }}">กลับ</a>{% else %}<a class="btn btn-light" href="{{ url_for('event_registrations', event_id=team.event_id) }}">กลับ</a>{% endif %}</div>
+  </form>
+</div></div>

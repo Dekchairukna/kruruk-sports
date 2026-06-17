@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block page_title %}{{ 'แก้ไของค์กร' if org else 'เพิ่มองค์กร' }}{% endblock %}
+{% block content %}
+<div class="card soft-card"><div class="card-body">
+<form method="post" enctype="multipart/form-data">
+  <div class="row g-3">
+    <div class="col-md-8"><label class="form-label">ชื่อองค์กร</label><input class="form-control" name="name" value="{{ org.name if org else '' }}" required></div>
+    <div class="col-md-4"><label class="form-label">ประเภทองค์กร</label><select class="form-select" name="org_type">{% for t in ['โรงเรียน','อบต.','เทศบาล','เครือข่ายโรงเรียน','หน่วยงาน/องค์กร'] %}<option {{ 'selected' if org and org.org_type==t else '' }}>{{ t }}</option>{% endfor %}</select></div>
+    <div class="col-md-12"><label class="form-label">โลโก้</label><input class="form-control" name="logo" type="file" accept="image/*"></div>
+  </div>
+  <button class="btn btn-primary mt-4">บันทึก</button>
+  <a class="btn btn-light mt-4" href="{{ url_for('organizations') }}">กลับ</a>
+</form>
+</div></div>
+{% endblock %}

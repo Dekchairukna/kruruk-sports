@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block title %}ทีมกรอกข้อมูล · KRURUK SPORTS{% endblock %}
+{% block auth_content %}
+<div class="auth-page">
+  <div class="auth-card">
+    <div class="text-center mb-4">
+      <div class="brand justify-content-center mb-3"><span class="brand-mark">KS</span><div><b>KRURUK</b><small>SPORTS</small></div></div>
+      <h4 class="mb-1">ทีม/สี กรอกข้อมูล</h4>
+      <div class="text-muted">กรอกรหัสทีมที่แอดมินให้ไว้</div>
+    </div>
+    <form method="post">
+      <label class="form-label">รหัสทีม</label>
+      <input class="form-control form-control-lg text-uppercase" name="access_code" placeholder="เช่น RED2569" required autofocus>
+      <button class="btn btn-primary w-100 mt-3 btn-lg">เข้าสู่หน้ากรอกข้อมูล</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><title>{{ comp.name }}</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>body{padding:24px}.print-header{text-align:center;margin-bottom:20px}@media print{.no-print{display:none}}</style></head>
+<body>
+<div class="no-print mb-3"><button onclick="window.print()" class="btn btn-primary">พิมพ์ / Save as PDF</button></div>
+<div class="print-header">
+  <h3>ใบผลการแข่งขัน</h3>
+  <h4>{{ comp.name }}</h4>
+  <div>{{ comp.event.name }} · {{ comp.sport_division.label if comp.sport_division else '' }}</div>
+</div>
+<table class="table table-bordered">
+  <thead><tr><th style="width:80px">อันดับ</th><th style="width:120px">เหรียญ</th><th>ทีม</th><th>ผู้แข่งขัน</th><th>เวลา</th><th>ระยะ</th><th>คะแนน</th><th>หมายเหตุ</th></tr></thead>
+  <tbody>
+  {% for r in results %}
+  <tr><td>{{ r.rank or '' }}</td><td>{% if r.medal=='gold' %}ทอง{% elif r.medal=='silver' %}เงิน{% elif r.medal=='bronze' %}ทองแดง{% endif %}</td><td>{{ r.team.name if r.team else '' }}</td><td>{{ r.competitor_name or (r.athlete.full_name if r.athlete else '') }}</td><td>{{ r.time_value or '' }}</td><td>{{ r.distance_value or '' }}</td><td>{{ r.score_value or '' }}</td><td>{{ r.note or '' }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<div class="row mt-5 text-center"><div class="col">ลงชื่อ __________________ กรรมการ</div><div class="col">ลงชื่อ __________________ ผู้บันทึก</div></div>
+</body></html>

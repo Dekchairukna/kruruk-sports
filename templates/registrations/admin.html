@@ -1,0 +1,66 @@
+{% extends 'base.html' %}
+{% block page_title %}ทะเบียนนักกีฬา/ผู้ฝึกสอน{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div>
+    <h4 class="mb-1">{{ event.name }}</h4>
+    <div class="text-muted">ตรวจสอบ อนุมัติ แก้ไข ส่งออก และนำเข้ารายชื่อ</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-outline-secondary" href="{{ url_for('event_detail', event_id=event.id) }}">กลับหน้างาน</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('registrations_import', event_id=event.id) }}">Import Excel</a>
+    <a class="btn btn-success" href="{{ url_for('registrations_export_excel', event_id=event.id) }}">Export Excel</a>
+    <a class="btn btn-dark" target="_blank" href="{{ url_for('registrations_print', event_id=event.id) }}">Print / PDF</a>
+  </div>
+</div>
+
+<div class="card soft-card mb-4"><div class="card-body">
+  <h5>นักกีฬา</h5>
+  <div class="table-responsive">
+    <table class="table align-middle">
+      <thead><tr><th>ทีม</th><th>ชื่อ</th><th>เพศ/ชั้น/ห้อง</th><th>เลขประจำตัว</th><th>กีฬา</th><th>สถานะ</th><th></th></tr></thead>
+      <tbody>
+      {% for a in athletes %}
+        <tr>
+          <td>{{ a.team.name }}</td>
+          <td><b>{{ a.full_name }}</b><div class="small text-muted">{{ a.phone or '' }}</div></td>
+          <td>{{ a.gender }} · {{ a.grade_level or '-' }} / {{ a.classroom or '-' }}</td>
+          <td>{{ a.student_no or '-' }}</td>
+          <td>{% for r in a.registrations %}<span class="badge text-bg-light border me-1">{{ r.sport_name }} · {{ r.category_name or '-' }} · {{ r.gender }}</span>{% else %}-{% endfor %}</td>
+          <td><span class="badge {{ 'bg-success' if a.status=='approved' else 'bg-danger' if a.status=='rejected' else 'bg-warning text-dark' }}">{{ a.status }}</span></td>
+          <td class="text-end">
+            <form class="d-inline" method="post" action="{{ url_for('athlete_status', athlete_id=a.id) }}"><input type="hidden" name="status" value="approved"><button class="btn btn-sm btn-outline-success">อนุมัติ</button></form>
+            <form class="d-inline" method="post" action="{{ url_for('athlete_status', athlete_id=a.id) }}"><input type="hidden" name="status" value="rejected"><button class="btn btn-sm btn-outline-danger">ไม่อนุมัติ</button></form>
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('athlete_edit', athlete_id=a.id) }}">แก้ไข</a>
+            <form class="d-inline" method="post" action="{{ url_for('athlete_delete', athlete_id=a.id) }}" onsubmit="return confirm('ลบนักกีฬา?')"><button class="btn btn-sm btn-outline-secondary">ลบ</button></form>
+          </td>
+        </tr>
+      {% else %}<tr><td colspan="7" class="text-center text-muted py-4">ยังไม่มีนักกีฬา</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div></div>
+
+<div class="card soft-card"><div class="card-body">
+  <h5>ผู้ฝึกสอน</h5>
+  <div class="table-responsive">
+    <table class="table align-middle">
+      <thead><tr><th>ทีม</th><th>ชื่อ</th><th>เบอร์โทร</th><th>กีฬาที่รับผิดชอบ</th><th>สถานะ</th><th></th></tr></thead>
+      <tbody>
+      {% for c in coaches %}
+        <tr>
+          <td>{{ c.team.name }}</td><td><b>{{ c.full_name }}</b></td><td>{{ c.phone or '-' }}</td><td>{{ c.sport_responsibility or '-' }}</td>
+          <td><span class="badge {{ 'bg-success' if c.status=='approved' else 'bg-danger' if c.status=='rejected' else 'bg-warning text-dark' }}">{{ c.status }}</span></td>
+          <td class="text-end">
+            <form class="d-inline" method="post" action="{{ url_for('coach_status', coach_id=c.id) }}"><input type="hidden" name="status" value="approved"><button class="btn btn-sm btn-outline-success">อนุมัติ</button></form>
+            <form class="d-inline" method="post" action="{{ url_for('coach_status', coach_id=c.id) }}"><input type="hidden" name="status" value="rejected"><button class="btn btn-sm btn-outline-danger">ไม่อนุมัติ</button></form>
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('coach_edit', coach_id=c.id) }}">แก้ไข</a>
+            <form class="d-inline" method="post" action="{{ url_for('coach_delete', coach_id=c.id) }}" onsubmit="return confirm('ลบผู้ฝึกสอน?')"><button class="btn btn-sm btn-outline-secondary">ลบ</button></form>
+          </td>
+        </tr>
+      {% else %}<tr><td colspan="6" class="text-center text-muted py-4">ยังไม่มีผู้ฝึกสอน</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div></div>
+{% endblock %}

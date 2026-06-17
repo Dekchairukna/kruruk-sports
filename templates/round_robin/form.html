@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block page_title %}สร้าง Round Robin{% endblock %}
+{% block content %}
+<form method="post" class="card soft-card">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start mb-3">
+      <div><h4>สร้างรายการ Round Robin</h4><div class="text-muted small">{{ event.name }}</div></div>
+      <a class="btn btn-light" href="{{ url_for('event_round_robin', event_id=event.id) }}">กลับ</a>
+    </div>
+    <div class="row g-3">
+      <div class="col-md-6"><label class="form-label">ชื่อรายการ</label><input class="form-control" name="name" placeholder="เช่น ฟุตซอล มัธยมต้น ชาย"></div>
+      <div class="col-md-6"><label class="form-label">กีฬา / รุ่น / เพศ</label><select class="form-select" name="sport_division_id"><option value="">ไม่ผูกกีฬา</option>{% for d in divisions %}<option value="{{ d.id }}">{{ d.label }}</option>{% endfor %}</select></div>
+      <div class="col-md-3"><label class="form-label">จำนวนกลุ่ม</label><input class="form-control" type="number" name="num_groups" value="4" min="1"></div>
+      <div class="col-md-3"><label class="form-label">ชนะ</label><input class="form-control" type="number" name="win_points" value="3"></div>
+      <div class="col-md-3"><label class="form-label">เสมอ</label><input class="form-control" type="number" name="draw_points" value="1"></div>
+      <div class="col-md-3"><label class="form-label">แพ้</label><input class="form-control" type="number" name="loss_points" value="0"></div>
+      <div class="col-md-4"><label class="form-label">เข้ารอบจากแต่ละกลุ่ม</label><input class="form-control" type="number" name="advance_per_group" value="1" min="0"></div>
+      <div class="col-md-4"><label class="form-label">Best Runner-up เพิ่ม</label><input class="form-control" type="number" name="best_runnerup_count" value="0" min="0"></div>
+      <div class="col-md-4"><label class="form-label">การแบ่งกลุ่ม</label><select class="form-select" name="assignment_mode"><option value="auto">สุ่มอัตโนมัติทันที</option><option value="manual">Manual Drag & Drop</option></select></div>
+    </div>
+    <hr>
+    <h6>Tie-break เรียงลำดับตามที่ติ๊ก</h6>
+    <div class="row g-2">
+      {% set opts=[('points','คะแนนรวม'),('goal_diff','ผลต่างประตู/แต้ม'),('goals_for','ประตู/แต้มได้'),('head_to_head','Head to Head'),('wins','จำนวนชนะ'),('set_diff','เซตได้เสีย'),('sets_for','เซตได้'),('draw_lots','จับสลาก')] %}
+      {% for val,label in opts %}
+      <div class="col-md-3"><label class="form-check"><input class="form-check-input" type="checkbox" name="tiebreakers" value="{{ val }}" {% if loop.index<=5 %}checked{% endif %}> {{ loop.index }}. {{ label }}</label></div>
+      {% endfor %}
+    </div>
+    <hr>
+    <h6>ทีมที่เข้าร่วม</h6>
+    <div class="row g-2">
+      {% for team in teams %}
+      <div class="col-md-3"><label class="form-check border rounded p-2"><input class="form-check-input ms-0 me-2" type="checkbox" name="team_ids" value="{{ team.id }}" checked>{{ team.name }}</label></div>
+      {% else %}<div class="col-12 text-muted">ยังไม่มีทีมในงานนี้</div>{% endfor %}
+    </div>
+    <div class="mt-4"><button class="btn btn-primary">สร้างรายการ</button></div>
+  </div>
+</form>
+{% endblock %}

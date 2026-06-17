@@ -1,0 +1,83 @@
+{% extends 'base.html' %}
+{% block page_title %}{{ comp.name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h4 class="mb-0">{{ comp.name }}</h4>
+    <div class="text-muted">{{ comp.sport_division.label if comp.sport_division else comp.event.name }}</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{{ url_for('event_ranking', event_id=comp.event_id) }}">กลับรายการ</a>
+    <a class="btn btn-outline-primary" target="_blank" href="{{ url_for('ranking_print', comp_id=comp.id) }}">พิมพ์/PDF</a>
+    <a class="btn btn-success" href="{{ url_for('ranking_export_excel', comp_id=comp.id) }}">Export Excel</a>
+  </div>
+</div>
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card soft-card sticky-top" style="top:1rem">
+      <div class="card-body">
+        <h5>เพิ่มผลการแข่งขัน</h5>
+        <form method="post" action="{{ url_for('ranking_result_add', comp_id=comp.id) }}" class="vstack gap-2">
+          <label class="form-label mb-0">ทีม/สี</label>
+          <select class="form-select" name="team_id" required>
+            <option value="">เลือกทีม</option>
+            {% for t in teams %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}
+          </select>
+          <label class="form-label mb-0">เลือกนักกีฬา (ถ้ามี)</label>
+          <select class="form-select" name="athlete_id">
+            <option value="">-- กรอกชื่อเอง/ไม่มีนักกีฬา --</option>
+            {% for a in athletes %}<option value="{{ a.id }}">{{ a.team.name }} - {{ a.full_name }} ({{ a.grade_level or '-' }})</option>{% endfor %}
+          </select>
+          <input class="form-control" name="competitor_name" placeholder="ชื่อผู้แข่งขัน/ทีมย่อย">
+          <div class="row g-2">
+            <div class="col-6"><input class="form-control" type="number" name="rank" placeholder="อันดับ"></div>
+            <div class="col-6"><input class="form-control" name="time_value" placeholder="เวลา เช่น 00:12.45"></div>
+            <div class="col-6"><input class="form-control" name="distance_value" placeholder="ระยะ เช่น 3.25 ม."></div>
+            <div class="col-6"><input class="form-control" name="score_value" placeholder="คะแนน"></div>
+          </div>
+          <textarea class="form-control" name="note" rows="2" placeholder="หมายเหตุ"></textarea>
+          <button class="btn btn-primary">บันทึกผล</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-8">
+    <div class="card soft-card">
+      <div class="table-responsive">
+        <table class="table align-middle mb-0">
+          <thead><tr><th>อันดับ</th><th>เหรียญ</th><th>ทีม</th><th>ผู้แข่งขัน</th><th>เวลา</th><th>ระยะ</th><th>คะแนน</th><th></th></tr></thead>
+          <tbody>
+          {% for r in results %}
+          <tr>
+            <td><b>{{ r.rank or '-' }}</b></td>
+            <td>{% if r.medal=='gold' %}🥇 ทอง{% elif r.medal=='silver' %}🥈 เงิน{% elif r.medal=='bronze' %}🥉 ทองแดง{% else %}-{% endif %}</td>
+            <td>{{ r.team.name if r.team else '-' }}</td>
+            <td>{{ r.competitor_name or (r.athlete.full_name if r.athlete else '-') }}</td>
+            <td>{{ r.time_value or '-' }}</td><td>{{ r.distance_value or '-' }}</td><td>{{ r.score_value or '-' }}</td>
+            <td class="text-end">
+              <button class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#edit{{ r.id }}">แก้</button>
+              <form method="post" action="{{ url_for('ranking_result_delete', result_id=r.id) }}" class="d-inline" onsubmit="return confirm('ลบผลนี้?')"><button class="btn btn-sm btn-outline-danger">ลบ</button></form>
+            </td>
+          </tr>
+          <tr class="collapse" id="edit{{ r.id }}"><td colspan="8">
+            <form method="post" action="{{ url_for('ranking_result_update', result_id=r.id) }}" class="row g-2">
+              <input type="hidden" name="team_id" value="{{ r.team_id }}">
+              <input type="hidden" name="athlete_id" value="{{ r.athlete_id or '' }}">
+              <div class="col-md-3"><input class="form-control" name="competitor_name" value="{{ r.competitor_name or '' }}" placeholder="ชื่อ"></div>
+              <div class="col-md-1"><input class="form-control" type="number" name="rank" value="{{ r.rank or '' }}" placeholder="อันดับ"></div>
+              <div class="col-md-2"><input class="form-control" name="time_value" value="{{ r.time_value or '' }}" placeholder="เวลา"></div>
+              <div class="col-md-2"><input class="form-control" name="distance_value" value="{{ r.distance_value or '' }}" placeholder="ระยะ"></div>
+              <div class="col-md-2"><input class="form-control" name="score_value" value="{{ r.score_value or '' }}" placeholder="คะแนน"></div>
+              <div class="col-md-2"><button class="btn btn-primary w-100">บันทึก</button></div>
+            </form>
+          </td></tr>
+          {% else %}
+          <tr><td colspan="8" class="text-center text-muted py-4">ยังไม่มีผลการแข่งขัน</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

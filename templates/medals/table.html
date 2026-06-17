@@ -1,0 +1,65 @@
+{% extends 'base.html' %}
+{% block page_title %}ตารางเหรียญรวม{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+  <div>
+    <div class="text-muted small">{{ event.name }}</div>
+    <h3 class="mb-0"><i class="bi bi-trophy-fill text-warning"></i> ตารางเหรียญรวม</h3>
+    <div class="text-muted">เรียงอันดับตาม ทอง → เงิน → ทองแดง</div>
+  </div>
+  <div class="d-flex gap-2 no-print">
+    <a class="btn btn-outline-secondary" href="{{ url_for('event_detail', event_id=event.id) }}">กลับหน้างาน</a>
+    <a class="btn btn-success" href="{{ url_for('event_medals_export', event_id=event.id, sport_id=selected.sport_id, class_name=selected.class_name, gender=selected.gender) }}"><i class="bi bi-file-earmark-excel"></i> Export Excel</a>
+    <button onclick="window.print()" class="btn btn-primary"><i class="bi bi-printer"></i> พิมพ์</button>
+  </div>
+</div>
+
+<div class="card soft-card mb-3 no-print">
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-4"><label class="form-label">กีฬา</label><select name="sport_id" class="form-select"><option value="">ทุกกีฬา</option>{% for sport in sports %}<option value="{{ sport.id }}" {{ 'selected' if selected.sport_id==sport.id else '' }}>{{ sport.name }}</option>{% endfor %}</select></div>
+      <div class="col-md-3"><label class="form-label">รุ่น</label><select name="class_name" class="form-select"><option value="">ทุกรุ่น</option>{% for c in classes %}<option value="{{ c }}" {{ 'selected' if selected.class_name==c else '' }}>{{ c }}</option>{% endfor %}</select></div>
+      <div class="col-md-3"><label class="form-label">เพศ</label><select name="gender" class="form-select"><option value="">ทุกเพศ</option>{% for g in genders %}<option value="{{ g }}" {{ 'selected' if selected.gender==g else '' }}>{{ g }}</option>{% endfor %}</select></div>
+      <div class="col-md-2 d-grid"><button class="btn btn-primary">กรอง</button></div>
+    </form>
+  </div>
+</div>
+
+{% if table and table[0].total > 0 %}
+<div class="alert alert-success d-flex justify-content-between align-items-center">
+  <div><b>แชมป์รวมตอนนี้:</b> {{ table[0].team.name }}</div>
+  <div>🥇 {{ table[0].gold }} · 🥈 {{ table[0].silver }} · 🥉 {{ table[0].bronze }}</div>
+</div>
+{% endif %}
+
+<div class="card soft-card mb-4">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0 medal-table">
+        <thead class="table-light"><tr><th class="text-center">อันดับ</th><th>ทีม/สี</th><th class="text-center">🥇 ทอง</th><th class="text-center">🥈 เงิน</th><th class="text-center">🥉 ทองแดง</th><th class="text-center">รวม</th></tr></thead>
+        <tbody>
+          {% for row in table %}
+          <tr class="{{ 'table-warning' if loop.first and row.total > 0 else '' }}">
+            <td class="text-center fw-bold">{{ loop.index }}</td>
+            <td><div class="d-flex align-items-center gap-2"><span class="team-dot" style="background: {{ row.team.color_hex }}"></span><div><b>{{ row.team.name }}</b><div class="text-muted small">{{ row.team.color_name or '' }}</div></div></div></td>
+            <td class="text-center medal-num">{{ row.gold }}</td><td class="text-center medal-num">{{ row.silver }}</td><td class="text-center medal-num">{{ row.bronze }}</td><td class="text-center fw-bold">{{ row.total }}</td>
+          </tr>
+          {% else %}<tr><td colspan="6" class="text-center text-muted py-4">ยังไม่มีทีมในงานนี้</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card soft-card">
+  <div class="card-header bg-white"><b>รายละเอียดเหรียญ</b></div>
+  <div class="card-body p-0">
+    <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead class="table-light"><tr><th>เหรียญ</th><th>ทีม</th><th>รายการ</th><th>กีฬา/รุ่น/เพศ</th><th>ประเภท</th><th>รายละเอียด</th></tr></thead><tbody>
+      {% for e in entries %}
+      <tr><td>{% if e.medal=='gold' %}🥇 ทอง{% elif e.medal=='silver' %}🥈 เงิน{% elif e.medal=='bronze' %}🥉 ทองแดง{% endif %}</td><td>{{ e.team.name if e.team else '-' }}</td><td>{{ e.competition }}</td><td>{{ e.sport }} / {{ e.class_name }} / {{ e.gender }}</td><td>{{ e.source }}</td><td>{{ e.detail }}</td></tr>
+      {% else %}<tr><td colspan="6" class="text-center text-muted py-4">ยังไม่มีผลการแข่งขันที่ออกเหรียญ</td></tr>{% endfor %}
+    </tbody></table></div>
+  </div>
+</div>
+<style>.team-dot{width:18px;height:18px;border-radius:50%;display:inline-block;border:2px solid rgba(0,0,0,.08)}.medal-num{font-size:1.25rem;font-weight:800}.medal-table th{white-space:nowrap}@media print{.sidebar,.topbar,.no-print,.btn{display:none!important}.content{margin:0!important;padding:0!important}.card{box-shadow:none!important;border:1px solid #ddd!important}}</style>
+{% endblock %}

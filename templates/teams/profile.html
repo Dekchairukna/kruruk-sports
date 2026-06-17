@@ -1,0 +1,140 @@
+{% extends 'base.html' %}
+{% block page_title %}ข้อมูลทีม/สี{% endblock %}
+{% block title %}ข้อมูลทีม · KRURUK SPORTS{% endblock %}
+{% block content %}
+<div class="mb-3 d-flex gap-2 flex-wrap">
+  {% if public_mode %}
+    <a class="btn btn-success" href="{{ url_for('portal_athletes', team_id=team.id) }}">กรอกนักกีฬา/ผู้ฝึกสอน</a>
+  {% else %}
+    <a class="btn btn-success" href="{{ url_for('event_registrations', event_id=event.id) }}">จัดการนักกีฬา/ผู้ฝึกสอน</a>
+  {% endif %}
+</div>
+{% set base_profile_url = 'team_portal_profile' if public_mode else 'team_profile' %}
+<div class="{% if public_mode and not current_user.is_authenticated %}container py-4{% endif %}">
+  <div class="card soft-card mb-4">
+    <div class="card-body">
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+        <div class="d-flex gap-3 align-items-center">
+          <div class="team-color" style="background: {{ team.color_hex }}"></div>
+          <div>
+            <div class="text-muted small">{{ event.name }}</div>
+            <h3 class="mb-1">{{ team.name }}</h3>
+            <div class="text-muted">{{ team.color_name or 'ไม่ระบุสี' }} · รหัสทีม <b>{{ team.access_code }}</b></div>
+          </div>
+        </div>
+        <div class="d-flex gap-2">
+          {% if not public_mode %}<a class="btn btn-light" href="{{ url_for('event_detail', event_id=event.id) }}">กลับงานแข่งขัน</a>{% endif %}
+          <a class="btn btn-outline-secondary" href="{{ url_for('team_entry') }}" target="_blank">หน้าทีมกรอกรหัส</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <form method="post" enctype="multipart/form-data" class="card soft-card mb-4">
+    <div class="card-body">
+      <h5 class="mb-3"><i class="bi bi-person-badge"></i> ผู้บริหาร / ที่ปรึกษา / ผู้ฝึกสอน</h5>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label">ชื่อผู้อำนวยการ</label>
+          <input class="form-control" name="director_name" value="{{ profile.director_name or '' }}">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">รูปผู้อำนวยการ</label>
+          <input class="form-control" type="file" name="director_photo" accept="image/*">
+          {% if profile.director_photo %}<a class="small" href="{{ url_for('static', filename='uploads/' ~ profile.director_photo) }}" target="_blank">ดูไฟล์เดิม</a>{% endif %}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">รองผู้อำนวยการ</label>
+          <textarea class="form-control" rows="4" name="deputy_directors" placeholder="หนึ่งบรรทัดต่อหนึ่งคน">{{ profile.deputy_directors or '' }}</textarea>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">ครูที่ปรึกษา</label>
+          <textarea class="form-control" rows="4" name="advisors" placeholder="ชื่อ / ตำแหน่ง / เบอร์โทร">{{ profile.advisors or '' }}</textarea>
+        </div>
+        <div class="col-12">
+          <label class="form-label">สรุปผู้ฝึกสอน</label>
+          <textarea class="form-control" rows="3" name="coaches_summary" placeholder="ระบุผู้ฝึกสอนและกีฬาที่ดูแล">{{ profile.coaches_summary or '' }}</textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="card-body border-top">
+      <h5 class="mb-3"><i class="bi bi-flag"></i> ขบวนพาเหรด</h5>
+      <div class="row g-3">
+        <div class="col-md-6"><label class="form-label">ชื่อขบวน</label><input class="form-control" name="parade_title" value="{{ profile.parade_title or '' }}"></div>
+        <div class="col-md-6"><label class="form-label">แนวคิดขบวน</label><input class="form-control" name="parade_concept" value="{{ profile.parade_concept or '' }}"></div>
+        <div class="col-12"><label class="form-label">คำอธิบายขบวน</label><textarea class="form-control" rows="3" name="parade_description">{{ profile.parade_description or '' }}</textarea></div>
+      </div>
+    </div>
+
+    <div class="card-body border-top">
+      <h5 class="mb-3"><i class="bi bi-megaphone"></i> สแตนด์เชียร์ / เชียร์ลีดเดอร์</h5>
+      <div class="row g-3">
+        <div class="col-md-6"><label class="form-label">แกนนำสแตนด์เชียร์</label><textarea class="form-control" rows="4" name="stand_leaders">{{ profile.stand_leaders or '' }}</textarea></div>
+        <div class="col-md-6"><label class="form-label">เชียร์ลีดเดอร์</label><textarea class="form-control" rows="4" name="cheerleader_summary">{{ profile.cheerleader_summary or '' }}</textarea></div>
+        <div class="col-md-4"><label class="form-label">สมาชิกสแตนด์ทั้งหมด</label><input class="form-control" type="number" name="stand_member_total" value="{{ profile.stand_member_total or 0 }}"></div>
+        <div class="col-md-4"><label class="form-label">ชาย</label><input class="form-control" type="number" name="stand_member_male" value="{{ profile.stand_member_male or 0 }}"></div>
+        <div class="col-md-4"><label class="form-label">หญิง</label><input class="form-control" type="number" name="stand_member_female" value="{{ profile.stand_member_female or 0 }}"></div>
+      </div>
+      <button class="btn btn-primary mt-4">บันทึกข้อมูลหลัก</button>
+    </div>
+  </form>
+
+  <div class="row g-4">
+    <div class="col-lg-7">
+      <div class="card soft-card h-100"><div class="card-body">
+        <h5 class="mb-3"><i class="bi bi-list-check"></i> รายชื่อและหน้าที่</h5>
+        <form method="post" action="{{ url_for('portal_person_add' if public_mode else 'team_person_add', team_id=team.id) }}" class="row g-2 align-items-end mb-3">
+          <div class="col-md-3"><label class="form-label">หมวด</label><select class="form-select" name="section">
+            <option value="executive">ผู้บริหาร</option><option value="advisor">ครูที่ปรึกษา</option><option value="coach">ผู้ฝึกสอน</option><option value="parade">ขบวนพาเหรด</option><option value="stand">สแตนด์เชียร์</option><option value="cheerleader">เชียร์ลีดเดอร์</option>
+          </select></div>
+          <div class="col-md-3"><label class="form-label">ชื่อ</label><input class="form-control" name="name" required></div>
+          <div class="col-md-3"><label class="form-label">หน้าที่/ตำแหน่ง</label><input class="form-control" name="role" placeholder="ถือป้าย / กัปตัน / โค้ช"></div>
+          <div class="col-md-2"><label class="form-label">เบอร์โทร</label><input class="form-control" name="phone"></div>
+          <div class="col-md-1"><button class="btn btn-primary w-100">+</button></div>
+          <div class="col-12"><input class="form-control" name="note" placeholder="หมายเหตุ"></div>
+        </form>
+        {% for section,label in [('executive','ผู้บริหาร'),('advisor','ครูที่ปรึกษา'),('coach','ผู้ฝึกสอน'),('parade','ขบวนพาเหรด'),('stand','สแตนด์เชียร์'),('cheerleader','เชียร์ลีดเดอร์')] %}
+          <div class="person-section mb-3">
+            <h6 class="section-title">{{ label }}</h6>
+            <div class="table-responsive"><table class="table align-middle table-sm">
+              <thead><tr><th>ชื่อ</th><th>หน้าที่</th><th>เบอร์</th><th>หมายเหตุ</th><th></th></tr></thead>
+              <tbody>
+              {% for person in people.get(section, []) %}
+                <tr>
+                  <td>{{ person.name }}</td><td>{{ person.role or '-' }}</td><td>{{ person.phone or '-' }}</td><td>{{ person.note or '-' }}</td>
+                  <td class="text-end"><form method="post" action="{{ url_for('portal_person_delete' if public_mode else 'team_person_delete', person_id=person.id) }}" onsubmit="return confirm('ลบรายชื่อนี้?')"><button class="btn btn-sm btn-outline-danger">ลบ</button></form></td>
+                </tr>
+              {% else %}<tr><td colspan="5" class="text-muted">ยังไม่มีข้อมูล</td></tr>{% endfor %}
+              </tbody>
+            </table></div>
+          </div>
+        {% endfor %}
+      </div></div>
+    </div>
+    <div class="col-lg-5">
+      <div class="card soft-card h-100"><div class="card-body">
+        <h5 class="mb-3"><i class="bi bi-paperclip"></i> ไฟล์แนบรูปภาพ / PDF</h5>
+        <form method="post" enctype="multipart/form-data" action="{{ url_for('portal_file_add' if public_mode else 'team_file_add', team_id=team.id) }}" class="row g-2 align-items-end mb-3">
+          <div class="col-md-5"><label class="form-label">หมวด</label><select class="form-select" name="section"><option value="general">ทั่วไป</option><option value="parade">ขบวน</option><option value="stand">สแตนด์</option><option value="cheerleader">เชียร์ลีดเดอร์</option></select></div>
+          <div class="col-md-7"><label class="form-label">ชื่อไฟล์/คำอธิบาย</label><input class="form-control" name="title"></div>
+          <div class="col-12"><input class="form-control" type="file" name="file" accept="image/*,.pdf" required></div>
+          <div class="col-12"><button class="btn btn-primary w-100">แนบไฟล์</button></div>
+        </form>
+        {% for section,label in [('general','ทั่วไป'),('parade','ขบวนพาเหรด'),('stand','สแตนด์เชียร์'),('cheerleader','เชียร์ลีดเดอร์')] %}
+          <h6 class="section-title mt-3">{{ label }}</h6>
+          {% for item in files.get(section, []) %}
+            <div class="file-row">
+              <div><b>{{ item.title or item.original_filename }}</b><div class="text-muted small">{{ item.original_filename }}</div></div>
+              <div class="d-flex gap-1">
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('static', filename='uploads/' ~ item.filename) }}" target="_blank">เปิด</a>
+                <form method="post" action="{{ url_for('portal_file_delete' if public_mode else 'team_file_delete', file_id=item.id) }}" onsubmit="return confirm('ลบไฟล์นี้?')"><button class="btn btn-sm btn-outline-danger">ลบ</button></form>
+              </div>
+            </div>
+          {% else %}<div class="text-muted small">ยังไม่มีไฟล์</div>{% endfor %}
+        {% endfor %}
+      </div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

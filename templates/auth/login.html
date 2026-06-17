@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% block title %}Login · KRURUK SPORTS{% endblock %}
+{% block auth_content %}
+<div class="auth-page">
+  <div class="auth-card">
+    <div class="brand justify-content-center mb-4"><span class="brand-mark">KS</span><div><b>KRURUK</b><small>SPORTS</small></div></div>
+    <h4 class="text-center mb-1">เข้าสู่ระบบ</h4>
+    <p class="text-center text-muted mb-4">ระบบกีฬาสี / กีฬาเครือข่าย / องค์กร</p>
+    <form method="post">
+      <label class="form-label">Email</label>
+      <input class="form-control mb-3" name="email" type="email" required>
+      <label class="form-label">Password</label>
+      <input class="form-control mb-4" name="password" type="password" required>
+      <button class="btn btn-primary w-100">Login</button>
+    </form>
+    <div class="text-center mt-3"><a href="{{ url_for('register') }}">สมัครสมาชิกใหม่</a></div>
+  </div>
+</div>
+{% endblock %}

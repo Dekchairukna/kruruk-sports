@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+{% block page_title %}{{ 'แก้ไขทีม/สี' if team else 'เพิ่มทีม/สี' }}{% endblock %}
+{% block content %}
+<div class="card soft-card"><div class="card-body">
+  <div class="mb-3">
+    <div class="text-muted small">งานแข่งขัน</div>
+    <h5>{{ event.name }}</h5>
+  </div>
+  <form method="post" enctype="multipart/form-data">
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label">ชื่อทีม/สี</label>
+        <input class="form-control" name="name" value="{{ team.name if team else '' }}" required placeholder="เช่น สีแดง / บ้านหนองโก / อบต.สะอาด">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">ชื่อสี</label>
+        <input class="form-control" name="color_name" value="{{ team.color_name if team else '' }}" placeholder="แดง / ฟ้า / เขียว">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">สีประจำทีม</label>
+        <input class="form-control form-control-color w-100" name="color_hex" type="color" value="{{ team.color_hex if team else '#ef4444' }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">โลโก้ทีม</label>
+        <input class="form-control" name="logo" type="file" accept="image/*">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">ธงทีม</label>
+        <input class="form-control" name="flag" type="file" accept="image/*">
+      </div>
+      <div class="col-md-8">
+        <label class="form-label">คำขวัญทีม</label>
+        <input class="form-control" name="motto" value="{{ team.motto if team else '' }}">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">รหัสสำหรับทีมเข้ากรอกข้อมูล</label>
+        <input class="form-control text-uppercase" name="access_code" value="{{ team.access_code if team else '' }}" placeholder="เว้นว่างเพื่อสุ่มอัตโนมัติ">
+      </div>
+      <div class="col-12">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" name="registration_open" id="registration_open" {{ 'checked' if not team or team.registration_open else '' }}>
+          <label class="form-check-label" for="registration_open">เปิดสิทธิ์ให้ทีมกรอกข้อมูล</label>
+        </div>
+      </div>
+    </div>
+    <div class="mt-4">
+      <button class="btn btn-primary">บันทึก</button>
+      <a class="btn btn-light" href="{{ url_for('event_detail', event_id=event.id) }}">กลับ</a>
+    </div>
+  </form>
+</div></div>
+{% endblock %}

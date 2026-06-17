@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+{% block page_title %}Template เกียรติบัตร{% endblock %}
+{% block content %}
+<div class="card soft-card">
+  <div class="card-body">
+    <h4>{{ 'แก้ไข' if template else 'สร้าง' }} Template เกียรติบัตร</h4>
+    <form method="post" enctype="multipart/form-data" class="row g-3">
+      <div class="col-md-4"><label class="form-label">ชื่อ Template</label><input class="form-control" name="name" value="{{ template.name if template else '' }}" required></div>
+      <div class="col-md-3"><label class="form-label">ประเภท</label><select class="form-select" name="cert_type">
+        {% for v,t in [('participant','ผู้เข้าร่วม'),('winner','ผู้ได้รับรางวัล'),('coach','ผู้ฝึกสอน'),('judge','กรรมการ'),('committee','คณะกรรมการ'),('sponsor','ผู้สนับสนุน'),('manual','อื่น ๆ')] %}
+        <option value="{{ v }}" {{ 'selected' if template and template.cert_type==v else '' }}>{{ t }}</option>{% endfor %}
+      </select></div>
+      <div class="col-md-3"><label class="form-label">หัวเกียรติบัตร</label><input class="form-control" name="title" value="{{ template.title if template else 'เกียรติบัตร' }}"></div>
+      <div class="col-md-1"><label class="form-label">พื้นหลัง</label><input type="color" class="form-control form-control-color" name="background_color" value="{{ template.background_color if template else '#ffffff' }}"></div>
+      <div class="col-md-1"><label class="form-label">สีหลัก</label><input type="color" class="form-control form-control-color" name="accent_color" value="{{ template.accent_color if template else '#1d4ed8' }}"></div>
+      <div class="col-12"><label class="form-label">ข้อความนำ</label><input class="form-control" name="subtitle" value="{{ template.subtitle if template else 'ขอมอบเกียรติบัตรฉบับนี้ไว้เพื่อแสดงว่า' }}"></div>
+      <div class="col-12"><label class="form-label">เนื้อหา</label><textarea class="form-control" name="body" rows="4">{{ template.body if template else 'ได้เข้าร่วมกิจกรรม/การแข่งขันในงาน {event_name}\nประเภท {sport}\n{award}' }}</textarea><div class="form-text">ตัวแปร: {event_name}, {name}, {team}, {role}, {award}, {sport}, {date}</div></div>
+      <div class="col-12"><label class="form-label">ท้ายเอกสาร</label><input class="form-control" name="footer_text" value="{{ template.footer_text if template else '' }}"></div>
+      <div class="col-md-4"><label class="form-label">โลโก้</label><input type="file" class="form-control" name="logo" accept="image/*"></div>
+      <div class="col-md-4"><label class="form-label">ลายเซ็นซ้าย</label><input type="file" class="form-control" name="signature_left" accept="image/*"></div>
+      <div class="col-md-4"><label class="form-label">ลายเซ็นขวา</label><input type="file" class="form-control" name="signature_right" accept="image/*"></div>
+      <div class="col-md-3"><label class="form-label">ชื่อผู้ลงนามซ้าย</label><input class="form-control" name="signature_left_name" value="{{ template.signature_left_name if template else '' }}"></div>
+      <div class="col-md-3"><label class="form-label">ตำแหน่งซ้าย</label><input class="form-control" name="signature_left_position" value="{{ template.signature_left_position if template else '' }}"></div>
+      <div class="col-md-3"><label class="form-label">ชื่อผู้ลงนามขวา</label><input class="form-control" name="signature_right_name" value="{{ template.signature_right_name if template else '' }}"></div>
+      <div class="col-md-3"><label class="form-label">ตำแหน่งขวา</label><input class="form-control" name="signature_right_position" value="{{ template.signature_right_position if template else '' }}"></div>
+      <div class="col-12"><label class="form-check"><input class="form-check-input" type="checkbox" name="is_active" value="1" {{ 'checked' if not template or template.is_active else '' }}> เปิดใช้งาน</label></div>
+      <div class="col-12 d-flex gap-2"><button class="btn btn-primary">บันทึก</button><a class="btn btn-light" href="{{ url_for('event_certificates', event_id=event.id) }}">กลับ</a></div>
+    </form>
+  </div>
+</div>
+{% endblock %}

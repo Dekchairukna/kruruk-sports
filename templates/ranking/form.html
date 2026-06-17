@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% block page_title %}สร้าง Ranking{% endblock %}
+{% block content %}
+<div class="card soft-card">
+  <div class="card-body">
+    <h4>สร้างรายการ Ranking</h4>
+    <form method="post" class="row g-3 mt-1">
+      <div class="col-md-6">
+        <label class="form-label">กีฬา / รุ่น / เพศ</label>
+        <select class="form-select" name="sport_division_id">
+          <option value="">-- เลือกจาก Sport Setup --</option>
+          {% for d in divisions %}<option value="{{ d.id }}">{{ d.label }} · {{ d.competition_format }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">ชื่อรายการ</label>
+        <input class="form-control" name="name" placeholder="เช่น วิ่ง 50 เมตร ป.1 ชาย">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">รูปแบบผล</label>
+        <select class="form-select" name="result_mode">
+          <option value="rank">กรอกอันดับ</option>
+          <option value="time">กรอกเวลา</option>
+          <option value="distance">กรอกระยะ</option>
+          <option value="score">กรอกคะแนน</option>
+        </select>
+      </div>
+      <div class="col-12 d-flex gap-2">
+        <button class="btn btn-primary">สร้างรายการ</button>
+        <a class="btn btn-light" href="{{ url_for('event_ranking', event_id=event.id) }}">ยกเลิก</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

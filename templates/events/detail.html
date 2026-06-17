@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+{% block page_title %}{{ event.name }}{% endblock %}
+{% block content %}
+<div class="row g-3 mb-4">
+  <div class="col-lg-8">
+    <div class="card soft-card h-100">
+      <div class="card-body">
+        <div class="d-flex align-items-start justify-content-between gap-3">
+          <div>
+            <div class="text-muted small">{{ event.organization.name }}</div>
+            <h3 class="mb-1">{{ event.name }}</h3>
+            <div class="text-muted">{{ event.location or '-' }} · {{ event.start_date or '-' }}{% if event.end_date %} - {{ event.end_date }}{% endif %}</div>
+          </div>
+          <span class="badge status-{{ event.status }}">{{ event.status }}</span>
+        </div>
+        <div class="mt-3 d-flex flex-wrap gap-2">
+          <a class="btn btn-outline-primary" href="{{ url_for('event_edit', event_id=event.id) }}"><i class="bi bi-pencil-square"></i> แก้ไขงาน</a>
+          <a class="btn btn-primary" href="{{ url_for('team_new', event_id=event.id) }}"><i class="bi bi-plus-circle"></i> เพิ่มทีม/สี</a>
+          <a class="btn btn-warning" href="{{ url_for('event_sports', event_id=event.id) }}"><i class="bi bi-sliders"></i> ตั้งค่ากีฬา</a>
+          <a class="btn btn-success" href="{{ url_for('event_registrations', event_id=event.id) }}"><i class="bi bi-person-lines-fill"></i> นักกีฬา/ผู้ฝึกสอน</a>
+          <a class="btn btn-info text-white" href="{{ url_for('event_round_robin', event_id=event.id) }}"><i class="bi bi-diagram-3"></i> Round Robin</a>
+          <a class="btn btn-secondary" href="{{ url_for('event_ranking', event_id=event.id) }}"><i class="bi bi-list-ol"></i> Ranking</a>
+          <a class="btn btn-outline-danger" href="{{ url_for('event_contests', event_id=event.id) }}"><i class="bi bi-star"></i> กิจกรรมประกวด</a>
+          <a class="btn btn-dark" href="{{ url_for('event_medals', event_id=event.id) }}"><i class="bi bi-trophy"></i> Medal Table</a>
+          <a class="btn btn-outline-success" href="{{ url_for('event_certificates', event_id=event.id) }}"><i class="bi bi-award"></i> Certificate</a>
+          <a class="btn btn-outline-light bg-primary text-white" href="{{ url_for('event_live_board_settings', event_id=event.id) }}"><i class="bi bi-display"></i> Live Board</a>
+          <a class="btn btn-outline-primary" target="_blank" href="{{ url_for('event_live_board', event_id=event.id) }}"><i class="bi bi-tv"></i> เปิดจอ</a>
+          <a class="btn btn-light" href="{{ url_for('events') }}">กลับรายการงาน</a>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card soft-card h-100">
+      <div class="card-body">
+        <div class="row text-center mb-3">
+          <div class="col"><div class="text-muted small">ชนิดกีฬา</div><h4>{{ sport_count|default(0) }}</h4></div>
+          <div class="col"><div class="text-muted small">รายการย่อย</div><h4>{{ division_count|default(0) }}</h4></div>
+        </div>
+        <h6>จัดการสถานะงาน</h6>
+        <form method="post" action="{{ url_for('event_status', event_id=event.id) }}" class="d-flex gap-2 mb-3">
+          <select class="form-select" name="status">
+            {% for s in ['draft','open','closed','archived'] %}<option value="{{ s }}" {{ 'selected' if event.status==s else '' }}>{{ s }}</option>{% endfor %}
+          </select>
+          <button class="btn btn-primary">บันทึก</button>
+        </form>
+        <form method="post" action="{{ url_for('event_delete', event_id=event.id) }}" onsubmit="return confirm('ยืนยันลบงานแข่งขันนี้? ทีม/สีในงานนี้จะถูกลบด้วย')">
+          <button class="btn btn-outline-danger w-100"><i class="bi bi-trash"></i> ลบงานแข่งขัน</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 class="mb-0">ทีม/สีในงานนี้</h5>
+    <div class="text-muted small">รหัสทีมใช้สำหรับให้ทีมเข้ากรอกข้อมูลเอง และเพิ่มข้อมูลสูจิบัตร/รายงาน</div>
+  </div>
+  <div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('team_entry') }}" target="_blank">หน้าทีมกรอกรหัส</a><a class="btn btn-primary" href="{{ url_for('team_new', event_id=event.id) }}">+ เพิ่มทีม/สี</a></div>
+</div>
+
+<div class="row g-3">
+  {% for team in teams %}
+  <div class="col-md-6 col-xl-4">
+    <div class="card soft-card team-card h-100">
+      <div class="card-body">
+        <div class="d-flex gap-3 align-items-start">
+          <div class="team-color" style="background: {{ team.color_hex }}"></div>
+          <div class="flex-grow-1">
+            <h5 class="mb-1">{{ team.name }}</h5>
+            <div class="text-muted small">{{ team.color_name or 'ไม่ระบุสี' }}</div>
+            {% if team.motto %}<div class="team-motto mt-2">“{{ team.motto }}”</div>{% endif %}
+          </div>
+          <span class="badge {{ 'bg-success' if team.registration_open else 'bg-secondary' }}">{{ 'เปิดกรอก' if team.registration_open else 'ปิดกรอก' }}</span>
+        </div>
+        <div class="team-code mt-3"><span>รหัสทีม</span><b>{{ team.access_code }}</b></div>
+        <div class="d-flex flex-wrap gap-2 mt-3">
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('team_edit', team_id=team.id) }}">แก้ไขทีม</a>
+          <a class="btn btn-sm btn-primary" href="{{ url_for('team_profile', team_id=team.id) }}">ข้อมูลทีม</a>
+          <a class="btn btn-sm btn-success" href="{{ url_for('event_registrations', event_id=event.id) }}">รายชื่อ</a>
+          <form method="post" action="{{ url_for('team_toggle', team_id=team.id) }}">
+            <button class="btn btn-sm btn-outline-secondary">{{ 'ปิดสิทธิ์กรอก' if team.registration_open else 'เปิดสิทธิ์กรอก' }}</button>
+          </form>
+          <form method="post" action="{{ url_for('team_delete', team_id=team.id) }}" onsubmit="return confirm('ยืนยันลบทีม/สีนี้?')">
+            <button class="btn btn-sm btn-outline-danger">ลบ</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="col-12"><div class="empty-box">ยังไม่มีทีม/สีในงานนี้ กด “เพิ่มทีม/สี” เพื่อเริ่มต้น</div></div>
+  {% endfor %}
+</div>
+{% endblock %}
