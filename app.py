@@ -90,6 +90,13 @@ def create_app():
         import models  # noqa: F401
         if os.getenv("SKIP_DB_INIT", "0") == "1":
             app.logger.warning("SKIP_DB_INIT=1: skipping db.create_all/schema seed during boot")
+            try:
+                # Even when full DB init is skipped on Railway, keep lightweight
+                # schema upgrades enabled so new columns added in models.py
+                # are created automatically on existing Postgres tables.
+                ensure_schema_upgrades()
+            except Exception:
+                app.logger.exception("Schema upgrade failed during boot")
         else:
             try:
                 db.create_all()
