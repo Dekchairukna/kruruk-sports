@@ -11,6 +11,8 @@ import json
 import hashlib
 import hmac
 from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
 from dotenv import load_dotenv
 from flask import Flask, flash, redirect, render_template, request, url_for, session, send_file, make_response, jsonify, current_app
@@ -156,6 +158,16 @@ def ensure_schema_upgrades():
         add_column("knockout_matches", "score_history TEXT")
     if "point_diff" not in cols:
         add_column("knockout_matches", "point_diff INTEGER DEFAULT 0")
+
+    cols = existing_columns("teams")
+    if "line_user_id" not in cols:
+        add_column("teams", "line_user_id VARCHAR(120)")
+    if "line_contact_name" not in cols:
+        add_column("teams", "line_contact_name VARCHAR(180)")
+    if "line_invite_sent_at" not in cols:
+        add_column("teams", "line_invite_sent_at TIMESTAMP")
+    if "line_invite_error" not in cols:
+        add_column("teams", "line_invite_error TEXT")
 
     cols = existing_columns("users")
     if "username" not in cols:
@@ -696,6 +708,82 @@ def org_required(fn):
     return wrapper
 
 
+
+def line_channel_access_token():
+    """LINE Messaging API token สำหรับส่งข้อความไปหัวหน้าสีผ่าน Official Account"""
+    return (
+        os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+        or os.getenv("LINE_MESSAGING_CHANNEL_ACCESS_TOKEN")
+        or os.getenv("LINE_BOT_CHANNEL_ACCESS_TOKEN")
+        or ""
+    ).strip()
+
+
+def is_line_message_ready():
+    return bool(line_channel_access_token())
+
+
+def build_team_invite_message(team):
+    """ข้อความมาตรฐานสำหรับส่งให้หัวหน้าสี/หัวหน้าทีมเข้ากรอกข้อมูลเอง"""
+    entry_url = url_for("team_entry", _external=True)
+    event = team.event
+    return (
+        f"แจ้งหัวหน้าสี/หัวหน้าทีม\n\n"
+        f"งาน: {event.name}\n"
+        f"ทีม/สี: {team.name}\n"
+        f"รหัสกรอกข้อมูล: {team.access_code}\n\n"
+        f"ให้เข้ากรอกข้อมูลนักกีฬา/ผู้ควบคุมทีมที่ลิงก์นี้\n"
+        f"{entry_url}\n\n"
+        f"วิธีเข้าใช้งาน:\n"
+        f"1) กดลิงก์ด้านบน\n"
+        f"2) กรอกรหัสทีม/สี: {team.access_code}\n"
+        f"3) กดเข้าสู่หน้ากรอกข้อมูล\n"
+        f"4) เพิ่มรายชื่อนักกีฬา ผู้ฝึกสอน และตรวจสอบข้อมูลให้ถูกต้องก่อนบันทึก\n\n"
+        f"หมายเหตุ: รหัสนี้ใช้ได้เฉพาะทีม/สีของท่านเท่านั้น"
+    )
+
+
+def send_line_push_message(line_user_id, message):
+    """ส่งข้อความ LINE ด้วย Messaging API push message.
+
+    line_user_id ต้องเป็น userId ของ LINE OA เช่น Uxxxxxxxx ไม่ใช่ LINE ID ที่ผู้ใช้ตั้งเอง.
+    """
+    token = line_channel_access_token()
+    if not token:
+        return False, "ยังไม่ได้ตั้งค่า LINE_CHANNEL_ACCESS_TOKEN ใน .env/Railway Variables"
+    line_user_id = (line_user_id or "").strip()
+    if not line_user_id:
+        return False, "ยังไม่ได้กรอก LINE userId ของหัวหน้าสี/ทีม"
+    payload = json.dumps({
+        "to": line_user_id,
+        "messages": [{"type": "text", "text": message}],
+    }).encode("utf-8")
+    req = Request(
+        "https://api.line.me/v2/bot/message/push",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(req, timeout=12) as resp:
+            if 200 <= resp.status < 300:
+                return True, "ส่งข้อความ LINE สำเร็จ"
+            return False, f"LINE API ตอบกลับสถานะ {resp.status}"
+    except HTTPError as exc:
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+        return False, f"LINE API error {exc.code}: {body[:300]}"
+    except URLError as exc:
+        return False, f"เชื่อมต่อ LINE API ไม่สำเร็จ: {exc.reason}"
+    except Exception as exc:
+        return False, f"ส่งข้อความ LINE ไม่สำเร็จ: {exc}"
+
+
 def register_routes(app):
     from models import Event, Organization, OrganizationMember, Team, TeamFile, TeamPerson, TeamProfile, User, Athlete, AthleteRegistration, Coach, SportCategory, Sport, SportDivision, RoundRobinCompetition, RoundRobinGroup, RoundRobinGroupTeam, RoundRobinMatch, KnockoutCompetition, KnockoutMatch, RankingCompetition, RankingResult, ContestCompetition, ContestCriterion, ContestJudge, ContestScore, ContestResult, CertificateTemplate, CertificateRecipient, LiveBoardSetting, SubscriptionPlan, OrganizationSubscription, Invoice, OAuthAccount, PaymentTransaction
 
@@ -767,6 +855,7 @@ def register_routes(app):
             "feature_allowed": feature_allowed,
             "oauth_providers": available_oauth_providers(),
             "payment_gateways": current_app_payment_gateways(),
+            "line_message_ready": is_line_message_ready(),
             "active_event_id": active_event_id,
             "active_org_id": active_org_id,
         }
@@ -1052,6 +1141,8 @@ def register_routes(app):
                 flag=save_upload(request.files.get("flag")),
                 motto=request.form.get("motto", "").strip(),
                 access_code=(request.form.get("access_code", "").strip().upper() or generate_team_code(event.id)),
+                line_contact_name=request.form.get("line_contact_name", "").strip(),
+                line_user_id=request.form.get("line_user_id", "").strip(),
                 registration_open=bool(request.form.get("registration_open")),
             )
             if not team.name:
@@ -1195,6 +1286,8 @@ def register_routes(app):
                 t.color_name,
                 t.motto,
                 t.access_code,
+                t.line_contact_name or "",
+                t.line_user_id or "",
                 "เปิด" if t.registration_open else "ปิด",
                 p.director_name if p else "",
                 p.deputy_directors if p else "",
@@ -1207,7 +1300,7 @@ def register_routes(app):
 
         output = build_report_workbook(
             "รายงานทีม",
-            ["ทีม", "สี", "คำขวัญ", "รหัสทีม", "สถานะกรอก", "ผอ.", "รอง ผอ.", "ครูที่ปรึกษา", "ผู้ฝึกสอน", "ขบวน", "จำนวนสแตนด์", "เชียร์ลีดเดอร์"],
+            ["ทีม", "สี", "คำขวัญ", "รหัสทีม", "ชื่อหัวหน้าสี", "LINE userId", "สถานะกรอก", "ผอ.", "รอง ผอ.", "ครูที่ปรึกษา", "ผู้ฝึกสอน", "ขบวน", "จำนวนสแตนด์", "เชียร์ลีดเดอร์"],
             rows,
         )
         return send_file(output, as_attachment=True, download_name=f"teams_event_{event.id}.xlsx", mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -1251,6 +1344,8 @@ def register_routes(app):
             team.color_hex = request.form.get("color_hex", "#ef4444")
             team.motto = request.form.get("motto", "").strip()
             team.access_code = new_code
+            team.line_contact_name = request.form.get("line_contact_name", "").strip()
+            team.line_user_id = request.form.get("line_user_id", "").strip()
             team.registration_open = bool(request.form.get("registration_open"))
             uploaded_logo = save_upload(request.files.get("logo"))
             uploaded_flag = save_upload(request.files.get("flag"))
@@ -1265,6 +1360,59 @@ def register_routes(app):
             flash("บันทึกข้อมูลทีม/สีแล้ว", "success")
             return redirect(url_for("event_detail", event_id=event.id))
         return render_template("teams/form.html", event=event, team=team)
+
+    @app.route("/teams/<int:team_id>/line-invite", methods=["POST"])
+    @login_required
+    def team_line_invite(team_id):
+        team = Team.query.get_or_404(team_id)
+        if not can_access_org(team.event.organization_id):
+            flash("คุณไม่มีสิทธิ์ส่งข้อความทีมนี้", "danger")
+            return redirect(url_for("events"))
+        message = build_team_invite_message(team)
+        ok, msg = send_line_push_message(team.line_user_id, message)
+        if ok:
+            team.line_invite_sent_at = datetime.utcnow()
+            team.line_invite_error = None
+            flash(f"ส่งข้อความ LINE ให้ {team.name} แล้ว", "success")
+        else:
+            team.line_invite_error = msg
+            flash(msg, "danger")
+        db.session.commit()
+        return redirect(url_for("event_detail", event_id=team.event_id, _anchor="teams-section"))
+
+    @app.route("/events/<int:event_id>/teams/line-invite-all", methods=["POST"])
+    @login_required
+    def event_line_invite_all(event_id):
+        event = Event.query.get_or_404(event_id)
+        if not can_access_org(event.organization_id):
+            flash("คุณไม่มีสิทธิ์ส่งข้อความในงานนี้", "danger")
+            return redirect(url_for("events"))
+        teams = Team.query.filter_by(event_id=event.id).order_by(Team.name).all()
+        sent = 0
+        failed = 0
+        skipped = 0
+        errors = []
+        for team in teams:
+            if not team.line_user_id:
+                skipped += 1
+                continue
+            ok, msg = send_line_push_message(team.line_user_id, build_team_invite_message(team))
+            if ok:
+                sent += 1
+                team.line_invite_sent_at = datetime.utcnow()
+                team.line_invite_error = None
+            else:
+                failed += 1
+                team.line_invite_error = msg
+                errors.append(f"{team.name}: {msg}")
+        db.session.commit()
+        if sent:
+            flash(f"ส่ง LINE สำเร็จ {sent} ทีม/สี", "success")
+        if skipped:
+            flash(f"ข้าม {skipped} ทีม/สี เพราะยังไม่ได้กรอก LINE userId", "warning")
+        if failed:
+            flash(f"ส่งไม่สำเร็จ {failed} ทีม/สี: " + " | ".join(errors[:3]), "danger")
+        return redirect(url_for("event_detail", event_id=event.id, _anchor="teams-section"))
 
     @app.route("/teams/<int:team_id>/toggle", methods=["POST"])
     @login_required

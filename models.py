@@ -216,6 +216,11 @@ class Team(db.Model):
     flag = db.Column(db.String(255))
     motto = db.Column(db.String(255))
     access_code = db.Column(db.String(40), nullable=False, index=True)
+    # LINE Messaging API: ต้องเป็น LINE userId ที่ได้จาก Official Account/LIFF ไม่ใช่ LINE ID แบบ @abc
+    line_user_id = db.Column(db.String(120))
+    line_contact_name = db.Column(db.String(180))
+    line_invite_sent_at = db.Column(db.DateTime)
+    line_invite_error = db.Column(db.Text)
     registration_open = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 

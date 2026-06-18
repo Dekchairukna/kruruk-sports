@@ -36,6 +36,15 @@
         <label class="form-label">รหัสสำหรับทีมเข้ากรอกข้อมูล</label>
         <input class="form-control text-uppercase" name="access_code" value="{{ team.access_code if team else '' }}" placeholder="เว้นว่างเพื่อสุ่มอัตโนมัติ">
       </div>
+      <div class="col-md-4">
+        <label class="form-label">ชื่อหัวหน้าสี/ผู้รับผิดชอบ</label>
+        <input class="form-control" name="line_contact_name" value="{{ team.line_contact_name if team else '' }}" placeholder="เช่น ครูสมชาย / หัวหน้าสีแดง">
+      </div>
+      <div class="col-md-8">
+        <label class="form-label">LINE userId สำหรับส่งข้อความ</label>
+        <input class="form-control" name="line_user_id" value="{{ team.line_user_id if team else '' }}" placeholder="เช่น Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+        <div class="form-text">ต้องเป็น LINE userId ที่ได้จาก LINE Official Account/LIFF ไม่ใช่ LINE ID หรือ @ไอดีที่ตั้งเอง ถ้ายังไม่มีให้เว้นว่าง แล้วคัดลอกข้อความส่งเองก่อน</div>
+      </div>
       <div class="col-12">
         <div class="form-check form-switch">
           <input class="form-check-input" type="checkbox" name="registration_open" id="registration_open" {{ 'checked' if not team or team.registration_open else '' }}>
