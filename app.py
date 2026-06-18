@@ -23,14 +23,48 @@ from extensions import db, login_manager
 from sqlalchemy import text, inspect
 
 
+def normalize_database_url(url: str) -> str:
+    """Return a SQLAlchemy URL that works on Railway without system libpq.
+
+    Railway often provides postgresql://...; SQLAlchemy maps that to psycopg2
+    by default. psycopg2 can fail on minimal images when libpq.so.5 is absent.
+    Force psycopg v3 binary driver instead.
+    """
+    if not url:
+        return url
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    if url.startswith("postgresql+psycopg2://"):
+        url = "postgresql+psycopg://" + url[len("postgresql+psycopg2://"):]
+    elif url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url[len("postgresql://"):]
+    return url
+
+
+def int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 def create_app():
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "kruruk-sports-dev-key")
     instance_path = Path(app.instance_path)
     instance_path.mkdir(parents=True, exist_ok=True)
-    database_url = os.getenv("DATABASE_URL") or f"sqlite:///{instance_path / 'kruruk_sports.db'}"
+    raw_database_url = os.getenv("DATABASE_URL") or f"sqlite:///{instance_path / 'kruruk_sports.db'}"
+    database_url = normalize_database_url(raw_database_url)
     app.config["SQLALCHEMY_DATABASE_URI"] = database_url
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+    engine_options = {"pool_pre_ping": True}
+    if database_url.startswith("postgresql"):
+        engine_options.update({
+            "pool_recycle": 300,
+            "connect_args": {"connect_timeout": int_env("DB_CONNECT_TIMEOUT", 10)},
+        })
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = engine_options
     app.config["UPLOAD_FOLDER"] = str(Path(app.root_path) / "static" / "uploads")
     app.config["SOCIAL_LOGIN_ENABLED"] = os.getenv("SOCIAL_LOGIN_ENABLED", "1") == "1"
     app.config["PAYMENT_GATEWAYS"] = [g.strip() for g in os.getenv("PAYMENT_GATEWAYS", "manual,promptpay").split(",") if g.strip()]
@@ -38,15 +72,32 @@ def create_app():
     app.config["PAYMENT_RETURN_BASE_URL"] = os.getenv("PAYMENT_RETURN_BASE_URL", "")
     Path(app.config["UPLOAD_FOLDER"]).mkdir(parents=True, exist_ok=True)
 
+    @app.get("/healthz")
+    def healthz():
+        return jsonify({
+            "ok": True,
+            "service": "kruruk-sports",
+            "database_url_configured": bool(os.getenv("DATABASE_URL")),
+            "promptpay_configured": bool(os.getenv("PROMPTPAY_ID")),
+        })
+
     db.init_app(app)
     login_manager.init_app(app)
 
     with app.app_context():
         import models  # noqa: F401
-        db.create_all()
-        ensure_schema_upgrades()
-        seed_default_admin()
-        seed_subscription_plans()
+        if os.getenv("SKIP_DB_INIT", "0") == "1":
+            app.logger.warning("SKIP_DB_INIT=1: skipping db.create_all/schema seed during boot")
+        else:
+            try:
+                db.create_all()
+                ensure_schema_upgrades()
+                seed_default_admin()
+                seed_subscription_plans()
+            except Exception:
+                # Do not let Railway kill the web process during boot.
+                # The exact database error will still be visible in deploy logs.
+                app.logger.exception("Database initialization failed during boot")
 
     register_routes(app)
     return app
