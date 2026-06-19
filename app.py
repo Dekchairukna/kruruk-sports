@@ -865,6 +865,11 @@ def register_routes(app):
             "line_message_ready": is_line_message_ready(),
             "active_event_id": active_event_id,
             "active_org_id": active_org_id,
+            "set_score_rows": set_score_rows,
+            "set_point_totals": set_point_totals,
+            "rr_result_type": rr_result_type,
+            "knockout_result_type": knockout_result_type,
+            "app_trial_label": "ทดลองใช้",
         }
 
     @app.route("/")
@@ -966,13 +971,26 @@ def register_routes(app):
         org_count = org_query.count()
         event_count = event_query.count()
         open_count = event_query.filter(Event.status == "open").count()
-        latest_events = event_query.order_by(Event.created_at.desc()).limit(5).all()
+        latest_events = event_query.order_by(Event.created_at.desc()).limit(20).all()
         from models import Team
         team_query = Team.query.join(Event)
         if org_ids is not None:
             team_query = team_query.filter(Event.organization_id.in_(org_ids or [0]))
         team_count = team_query.count()
-        return render_template("dashboard.html", org_count=org_count, event_count=event_count, open_count=open_count, team_count=team_count, latest_events=latest_events)
+        open_events = [e for e in latest_events if e.status == "open"]
+        draft_events = [e for e in latest_events if e.status == "draft"]
+        other_events = [e for e in latest_events if e.status not in ("open", "draft")]
+        return render_template(
+            "dashboard.html",
+            org_count=org_count,
+            event_count=event_count,
+            open_count=open_count,
+            team_count=team_count,
+            latest_events=latest_events,
+            open_events=open_events,
+            draft_events=draft_events,
+            other_events=other_events,
+        )
 
     @app.route("/organizations")
     @login_required
@@ -1036,34 +1054,52 @@ def register_routes(app):
         org_query = Organization.query
         if org_ids is not None:
             org_query = org_query.filter(Organization.id.in_(org_ids or [0]))
-        orgs = org_query.all()
+        orgs = org_query.order_by(Organization.created_at.desc()).all()
         if request.method == "POST":
-            org_id = int(request.form.get("organization_id"))
-            if not can_access_org(org_id):
-                flash("คุณไม่มีสิทธิ์สร้างงานในองค์กรนี้", "danger")
-                return redirect(url_for("events"))
-            org = Organization.query.get_or_404(org_id)
+            org_id = safe_int_or_none(request.form.get("organization_id"))
+            org_context = (request.form.get("org_type") or "โรงเรียน").strip() or "โรงเรียน"
+            org_name = (request.form.get("context_name") or request.form.get("organization_name") or "").strip()
+            if org_id:
+                if not can_access_org(org_id):
+                    flash("คุณไม่มีสิทธิ์สร้างงานในบริบทนี้", "danger")
+                    return redirect(url_for("dashboard"))
+                org = Organization.query.get_or_404(org_id)
+            else:
+                if not org_name:
+                    org_name = (request.form.get("name") or "งานทดลอง").strip() or "งานทดลอง"
+                org = None
+                for candidate in orgs:
+                    if candidate.name == org_name and candidate.org_type == org_context:
+                        org = candidate
+                        break
+                if not org:
+                    org = Organization(name=org_name, org_type=org_context, logo=None)
+                    db.session.add(org)
+                    db.session.flush()
+                    db.session.add(OrganizationMember(user_id=current_user.id, organization_id=org.id, role="organization_admin"))
+                    ensure_free_subscription(org)
+                    db.session.flush()
             ok, msg = check_event_limit(org)
             if not ok:
                 return deny_upgrade(msg, "organizations_billing", org_id=org.id)
             event = Event(
-                organization_id=org_id,
+                organization_id=org.id,
                 name=request.form.get("name", "").strip(),
                 competition_year=request.form.get("competition_year", "").strip(),
                 start_date=parse_date(request.form.get("start_date")),
                 end_date=parse_date(request.form.get("end_date")),
                 location=request.form.get("location", "").strip(),
                 logo=save_upload(request.files.get("logo")),
-                theme_color=request.form.get("theme_color", "#4f46e5"),
-                status=request.form.get("status", "draft"),
+                theme_color=request.form.get("theme_color", "#38bdf8"),
+                status=request.form.get("status", "open"),
             )
             if not event.name:
                 flash("กรุณากรอกชื่องานแข่งขัน", "danger")
                 return render_template("events/form.html", event=None, orgs=orgs)
             db.session.add(event)
             db.session.commit()
-            flash("สร้างงานแข่งขันแล้ว", "success")
-            return redirect(url_for("events"))
+            flash("สร้างงานแข่งขันแล้ว ต่อไปเพิ่มทีม/สี และสร้างการแข่งขันได้เลย", "success")
+            return redirect(url_for("event_detail", event_id=event.id))
         return render_template("events/form.html", event=None, orgs=orgs)
 
     @app.route("/events/<int:event_id>/edit", methods=["GET", "POST"])
@@ -1102,7 +1138,332 @@ def register_routes(app):
         teams = Team.query.filter_by(event_id=event.id).order_by(Team.created_at.desc()).all()
         sport_count = Sport.query.filter_by(event_id=event.id).count()
         division_count = SportDivision.query.join(Sport).filter(Sport.event_id == event.id).count()
-        return render_template("events/detail.html", event=event, teams=teams, sport_count=sport_count, division_count=division_count)
+
+        competition_cards = []
+
+        def match_done(match):
+            status = getattr(match, "status", "")
+            if status in ("finished", "completed"):
+                return True
+            winner_team_id = getattr(match, "winner_team_id", None)
+            if winner_team_id:
+                return True
+            score_a = getattr(match, "score_a", None)
+            score_b = getattr(match, "score_b", None)
+            set_a = getattr(match, "set_a", None)
+            set_b = getattr(match, "set_b", None)
+            return (score_a is not None and score_b is not None) or (set_a is not None and set_b is not None)
+
+        rr_competitions = RoundRobinCompetition.query.filter_by(event_id=event.id).order_by(RoundRobinCompetition.created_at.desc()).all()
+        for comp in rr_competitions:
+            total_matches = len(comp.matches or [])
+            completed_matches = sum(1 for m in (comp.matches or []) if match_done(m))
+            group_count = len(comp.groups or [])
+            competition_cards.append({
+                "kind": "แบ่งกลุ่ม / พบกันหมด",
+                "badge": "Round Robin",
+                "icon": "bi-diagram-3",
+                "name": comp.name,
+                "status": comp.status,
+                "sport": comp.sport_division.label if comp.sport_division else "ไม่ระบุชนิดกีฬา",
+                "summary": f"{group_count or 1} กลุ่ม · แข่งแล้ว {completed_matches}/{total_matches} คู่",
+                "url": url_for("event_competition_program", event_id=event.id) + f"#rr-{comp.id}",
+                "manage_label": "โปรแกรม / จัดการผล",
+                "created_at": comp.created_at,
+            })
+
+        knockout_competitions = KnockoutCompetition.query.filter_by(event_id=event.id).order_by(KnockoutCompetition.created_at.desc()).all()
+        for comp in knockout_competitions:
+            total_matches = len(comp.matches or [])
+            completed_matches = sum(1 for m in (comp.matches or []) if match_done(m))
+            competition_cards.append({
+                "kind": "น็อคเอาท์",
+                "badge": "Knockout",
+                "icon": "bi-trophy",
+                "name": comp.name,
+                "status": comp.status,
+                "sport": comp.sport_division.label if comp.sport_division else "ไม่ระบุชนิดกีฬา",
+                "summary": f"แข่งแล้ว {completed_matches}/{total_matches} คู่",
+                "url": url_for("event_competition_program", event_id=event.id) + f"#ko-{comp.id}",
+                "manage_label": "สายแข่ง / บันทึกผล",
+                "created_at": comp.created_at,
+            })
+
+        ranking_competitions = RankingCompetition.query.filter_by(event_id=event.id).order_by(RankingCompetition.created_at.desc()).all()
+        for comp in ranking_competitions:
+            result_count = len(comp.results or [])
+            competition_cards.append({
+                "kind": "จัดอันดับ / เก็บเวลา / เก็บคะแนน",
+                "badge": "Ranking",
+                "icon": "bi-list-ol",
+                "name": comp.name,
+                "status": comp.status,
+                "sport": comp.sport_division.label if comp.sport_division else "ไม่ระบุชนิดกีฬา",
+                "summary": f"บันทึกผลแล้ว {result_count} รายการ",
+                "url": url_for("event_competition_program", event_id=event.id) + f"#ranking-{comp.id}",
+                "manage_label": "โปรแกรม / สรุปอันดับ",
+                "created_at": comp.created_at,
+            })
+
+        contest_competitions = ContestCompetition.query.filter_by(event_id=event.id).order_by(ContestCompetition.created_at.desc()).all()
+        for comp in contest_competitions:
+            result_count = len(comp.results or [])
+            competition_cards.append({
+                "kind": "กิจกรรมประกวด",
+                "badge": "Contest",
+                "icon": "bi-star",
+                "name": comp.name,
+                "status": comp.status,
+                "sport": comp.sport_division.label if comp.sport_division else comp.activity_type or "กิจกรรมประกวด",
+                "summary": f"กรรมการ {len(comp.judges or [])} คน · สรุปผลแล้ว {result_count} ทีม",
+                "url": url_for("event_competition_program", event_id=event.id) + f"#contest-{comp.id}",
+                "manage_label": "ให้คะแนน / สรุปผล",
+                "created_at": comp.created_at,
+            })
+
+        competition_cards.sort(key=lambda x: x.get("created_at") or datetime.min, reverse=True)
+        competition_count = len(competition_cards)
+
+        return render_template(
+            "events/detail.html",
+            event=event,
+            teams=teams,
+            sport_count=sport_count,
+            division_count=division_count,
+            competition_cards=competition_cards,
+            competition_count=competition_count,
+        )
+
+    @app.route("/events/<int:event_id>/program")
+    @login_required
+    def event_competition_program(event_id):
+        event = Event.query.get_or_404(event_id)
+        if not can_access_org(event.organization_id):
+            flash("คุณไม่มีสิทธิ์เข้าถึงงานนี้", "danger")
+            return redirect(url_for("events"))
+        session["active_event_id"] = event.id
+        session["active_org_id"] = event.organization_id
+
+        def match_completed(match):
+            if not match:
+                return False
+            if (getattr(match, "status", "") or "").lower() in ("completed", "finished", "done"):
+                return True
+            if getattr(match, "winner_team_id", None):
+                return True
+            if getattr(match, "set_a", None) is not None and getattr(match, "set_b", None) is not None:
+                return True
+            if getattr(match, "score_a", None) is not None and getattr(match, "score_b", None) is not None:
+                return True
+            return False
+
+        def result_text(match):
+            if not match_completed(match):
+                return ""
+            if getattr(match, "set_a", None) is not None and getattr(match, "set_b", None) is not None:
+                return f"{match.set_a} - {match.set_b} เซต"
+            if getattr(match, "score_a", None) is not None and getattr(match, "score_b", None) is not None:
+                return f"{match.score_a} - {match.score_b}"
+            if getattr(match, "winner_team", None):
+                return f"ชนะ: {match.winner_team.name}"
+            return ""
+
+        def set_badges(match):
+            badges = []
+            for row in set_score_rows(match):
+                badges.append(f"S{row['set']} {row['a']}–{row['b']}")
+            return badges
+
+        rr_sections = []
+        for comp in RoundRobinCompetition.query.filter_by(event_id=event.id).order_by(RoundRobinCompetition.created_at.asc()).all():
+            standings = calculate_rr_standings(comp)
+            qualifiers = calculate_rr_qualifiers(comp, standings)
+            all_matches = sorted(comp.matches or [], key=lambda m: ((m.round_no or 0), (m.match_no or 0)))
+            total = len(all_matches)
+            completed = sum(1 for m in all_matches if match_completed(m))
+            existing_ko = KnockoutCompetition.query.filter_by(source_round_robin_id=comp.id).first()
+            groups = []
+            for group in sorted(comp.groups, key=lambda g: g.sort_order or 0):
+                group_matches = [m for m in all_matches if m.group_id == group.id]
+                groups.append({
+                    "group": group,
+                    "teams": [gt.team for gt in group.group_teams],
+                    "matches": group_matches,
+                    "standings": standings.get(group.id, []),
+                })
+            all_done = bool(total and completed == total)
+            rr_sections.append({
+                "comp": comp,
+                "result_type": rr_result_type(comp),
+                "groups": groups,
+                "total": total,
+                "completed": completed,
+                "all_done": all_done,
+                "qualifiers": qualifiers,
+                "existing_ko": existing_ko,
+                "next_round_preview": build_rr_next_round_preview(comp, standings, use_actual=all_done),
+                "can_create_ko": bool(total and completed == total and not existing_ko and len(qualifiers) >= 2),
+            })
+
+        ko_sections = []
+        for comp in KnockoutCompetition.query.filter_by(event_id=event.id).order_by(KnockoutCompetition.created_at.asc()).all():
+            matches = sorted(comp.matches or [], key=lambda m: ((m.round_no or 0), (m.match_no or 0)))
+            total = len(matches)
+            completed = sum(1 for m in matches if match_completed(m))
+            rounds = []
+            for round_no in sorted({m.round_no for m in matches}):
+                round_matches = [m for m in matches if m.round_no == round_no]
+                rounds.append({
+                    "round_no": round_no,
+                    "round_name": round_matches[0].round_name if round_matches else f"รอบ {round_no}",
+                    "matches": round_matches,
+                    "completed": sum(1 for m in round_matches if match_completed(m)),
+                    "total": len(round_matches),
+                })
+            ko_sections.append({
+                "comp": comp,
+                "result_type": knockout_result_type(comp),
+                "rounds": rounds,
+                "future_preview": build_knockout_future_preview(comp),
+                "total": total,
+                "completed": completed,
+                "is_done": bool(total and completed == total and (comp.status or "") == "completed"),
+            })
+
+        ranking_sections = []
+        for comp in RankingCompetition.query.filter_by(event_id=event.id).order_by(RankingCompetition.created_at.asc()).all():
+            ranking_sections.append({
+                "comp": comp,
+                "results": RankingResult.query.filter_by(competition_id=comp.id).order_by(RankingResult.rank.asc().nullslast(), RankingResult.created_at.asc()).all(),
+            })
+
+        contest_sections = []
+        for comp in ContestCompetition.query.filter_by(event_id=event.id).order_by(ContestCompetition.created_at.asc()).all():
+            contest_sections.append({
+                "comp": comp,
+                "results": ContestResult.query.filter_by(competition_id=comp.id).order_by(ContestResult.rank.asc().nullslast(), ContestResult.total_score.desc()).all(),
+                "judges": comp.judges or [],
+            })
+
+        return render_template(
+            "events/program.html",
+            event=event,
+            rr_sections=rr_sections,
+            ko_sections=ko_sections,
+            ranking_sections=ranking_sections,
+            contest_sections=contest_sections,
+            result_text=result_text,
+            set_badges=set_badges,
+        )
+
+    @app.route("/events/<int:event_id>/program/print")
+    @login_required
+    def event_program_print(event_id):
+        event = Event.query.get_or_404(event_id)
+        if not can_access_org(event.organization_id):
+            flash("คุณไม่มีสิทธิ์เข้าถึงรายงานนี้", "danger")
+            return redirect(url_for("events"))
+        session["active_event_id"] = event.id
+        session["active_org_id"] = event.organization_id
+
+        def match_completed(match):
+            if not match:
+                return False
+            if (getattr(match, "status", "") or "").lower() in ("completed", "finished", "done"):
+                return True
+            if getattr(match, "winner_team_id", None):
+                return True
+            if getattr(match, "set_a", None) is not None and getattr(match, "set_b", None) is not None:
+                return True
+            if getattr(match, "score_a", None) is not None and getattr(match, "score_b", None) is not None:
+                return True
+            return False
+
+        def result_text(match):
+            if not match_completed(match):
+                return ""
+            if getattr(match, "set_a", None) is not None and getattr(match, "set_b", None) is not None:
+                return f"{match.set_a} - {match.set_b} เซต"
+            if getattr(match, "score_a", None) is not None and getattr(match, "score_b", None) is not None:
+                return f"{match.score_a} - {match.score_b}"
+            if getattr(match, "winner_team", None):
+                return f"ชนะ: {match.winner_team.name}"
+            return ""
+
+        def set_badges(match):
+            return [f"S{row['set']} {row['a']}–{row['b']}" for row in set_score_rows(match)]
+
+        teams = Team.query.filter_by(event_id=event.id).order_by(Team.name).all()
+        athletes = Athlete.query.join(Team).filter(Team.event_id == event.id).order_by(Team.name, Athlete.full_name).all()
+        coaches = Coach.query.join(Team).filter(Team.event_id == event.id).order_by(Team.name, Coach.full_name).all()
+        org_members = OrganizationMember.query.filter_by(organization_id=event.organization_id).all()
+
+        rr_sections = []
+        for comp in RoundRobinCompetition.query.filter_by(event_id=event.id).order_by(RoundRobinCompetition.created_at.asc()).all():
+            standings = calculate_rr_standings(comp)
+            matches = sorted(comp.matches or [], key=lambda m: ((m.round_no or 0), (m.match_no or 0)))
+            completed = sum(1 for m in matches if match_completed(m))
+            total = len(matches)
+            groups = []
+            for group in sorted(comp.groups, key=lambda g: g.sort_order or 0):
+                groups.append({
+                    "group": group,
+                    "teams": [gt.team for gt in group.group_teams],
+                    "matches": [m for m in matches if m.group_id == group.id],
+                    "standings": standings.get(group.id, []),
+                })
+            rr_sections.append({
+                "comp": comp,
+                "groups": groups,
+                "standings": standings,
+                "next_round_preview": build_rr_next_round_preview(comp, standings, use_actual=bool(total and completed == total)),
+            })
+
+        ko_sections = []
+        for comp in KnockoutCompetition.query.filter_by(event_id=event.id).order_by(KnockoutCompetition.created_at.asc()).all():
+            matches = sorted(comp.matches or [], key=lambda m: ((m.round_no or 0), (m.match_no or 0)))
+            rounds = []
+            for round_no in sorted({m.round_no for m in matches}):
+                round_matches = [m for m in matches if m.round_no == round_no]
+                rounds.append({
+                    "round_no": round_no,
+                    "round_name": round_matches[0].round_name if round_matches else f"รอบ {round_no}",
+                    "matches": round_matches,
+                })
+            ko_sections.append({"comp": comp, "rounds": rounds, "future_preview": build_knockout_future_preview(comp)})
+
+        ranking_sections = []
+        for comp in RankingCompetition.query.filter_by(event_id=event.id).order_by(RankingCompetition.created_at.asc()).all():
+            ranking_sections.append({
+                "comp": comp,
+                "results": RankingResult.query.filter_by(competition_id=comp.id).order_by(RankingResult.rank.asc().nullslast(), RankingResult.created_at.asc()).all(),
+            })
+
+        contest_sections = []
+        for comp in ContestCompetition.query.filter_by(event_id=event.id).order_by(ContestCompetition.created_at.asc()).all():
+            contest_sections.append({
+                "comp": comp,
+                "judges": comp.judges or [],
+                "results": ContestResult.query.filter_by(competition_id=comp.id).order_by(ContestResult.rank.asc().nullslast(), ContestResult.total_score.desc()).all(),
+            })
+
+        medal_rows = build_event_medal_rows(event)
+        return render_template(
+            "reports/program_print.html",
+            event=event,
+            teams=teams,
+            athletes=athletes,
+            coaches=coaches,
+            org_members=org_members,
+            rr_sections=rr_sections,
+            ko_sections=ko_sections,
+            ranking_sections=ranking_sections,
+            contest_sections=contest_sections,
+            medal_rows=medal_rows,
+            result_text=result_text,
+            set_badges=set_badges,
+            generated_at=datetime.utcnow(),
+        )
 
     @app.route("/events/<int:event_id>/status", methods=["POST"])
     @login_required
@@ -1517,10 +1878,10 @@ def register_routes(app):
             if not team:
                 flash("ไม่พบรหัสทีมนี้", "danger")
                 return render_template("team_portal/entry.html")
-            if not team.registration_open:
-                flash("ทีมนี้ถูกปิดสิทธิ์กรอกข้อมูลแล้ว", "warning")
-                return render_template("team_portal/entry.html")
             session[f"team_access_{team.id}"] = team.access_code
+            if not team.registration_open:
+                flash("ทีมนี้ปิดสิทธิ์กรอกข้อมูลแล้ว แต่ยังเข้าพิมพ์เกียรติบัตรได้", "info")
+                return redirect(url_for("portal_certificates", team_id=team.id))
             return redirect(url_for("team_portal_profile", team_id=team.id))
         return render_template("team_portal/entry.html")
 
@@ -1639,6 +2000,394 @@ def register_routes(app):
         divisions = SportDivision.query.join(Sport).filter(Sport.event_id == event.id).order_by(Sport.name, SportDivision.class_name, SportDivision.gender).all()
         return render_template("sports/setup.html", event=event, categories=categories, sports=sports, divisions=divisions)
 
+    @app.route("/events/<int:event_id>/competitions/quick-new", methods=["GET", "POST"])
+    @login_required
+    def event_competition_wizard(event_id):
+        """สร้างรายการแข่งขันจากมุมผู้ใช้จริง
+        Flow: เลือกกีฬา -> เลือกทีมที่ส่งจริง -> เลือกระบบ/กติกา -> สร้างตาราง
+        ไม่บังคับให้ต้องสร้างชนิดกีฬา/รุ่นย่อยล่วงหน้า
+        """
+        event = Event.query.get_or_404(event_id)
+        if not can_access_org(event.organization_id):
+            flash("คุณไม่มีสิทธิ์สร้างรายการในงานนี้", "danger")
+            return redirect(url_for("events"))
+
+        session["active_event_id"] = event.id
+        session["active_org_id"] = event.organization_id
+
+        teams = Team.query.filter_by(event_id=event.id).order_by(Team.name).all()
+        sports = Sport.query.filter_by(event_id=event.id).order_by(Sport.name).all()
+        divisions = SportDivision.query.join(Sport).filter(Sport.event_id == event.id).order_by(Sport.name, SportDivision.class_name, SportDivision.gender).all()
+
+        sport_presets = [
+            {"name": "ฟุตบอล", "category": "กีฬาทีม", "format": "round_robin", "result": "score_only", "max_sets": 0, "points": 0, "win": 0, "note": "IFAB Laws of the Game 2025/26: บันทึกผลเป็นประตูได้-เสีย ระยะเวลาแข่งขันปรับตามระเบียบงานได้"},
+            {"name": "ฟุตซอล", "category": "กีฬาทีม", "format": "round_robin", "result": "score_only", "max_sets": 0, "points": 0, "win": 0, "note": "FIFA Futsal Laws of the Game 2025/26: ปกติ 2 ครึ่ง ครึ่งละ 20 นาที บันทึกผลเป็นประตูได้-เสีย"},
+            {"name": "วอลเลย์บอล", "category": "กีฬาทีม", "format": "round_robin", "result": "set_based", "max_sets": 5, "points": 25, "win": 3, "note": "FIVB Official Volleyball Rules 2025-2028: ชนะ 3 เซต; เซต 1-4 ถึง 25 แต้ม ต้องห่าง 2; เซตตัดสินถึง 15 แต้ม"},
+            {"name": "เซปักตะกร้อ", "category": "กีฬาทีม", "format": "round_robin", "result": "set_based", "max_sets": 3, "points": 15, "win": 2, "note": "ISTAF Law of the Game 2024: ชนะ 2 ใน 3 เซต; เซตละ 15 แต้ม; 14-14 เล่นถึง 17 แต้ม"},
+            {"name": "เปตอง", "category": "กีฬาเฉพาะทาง", "format": "knockout", "result": "score_only", "max_sets": 0, "points": 13, "win": 0, "note": "FIPJP Official Rules: เกมปกติถึง 13 คะแนน; รอบลีก/คัดเลือกอาจกำหนด 11 คะแนนตามระเบียบงาน"},
+            {"name": "แบดมินตัน", "category": "กีฬาเฉพาะทาง", "format": "knockout", "result": "set_based", "max_sets": 3, "points": 21, "win": 2, "note": "BWF Laws ปัจจุบัน: 2 ใน 3 เกม เกมละ 21 แต้ม; BWF อนุมัติ 3x15 เริ่ม 4 ม.ค. 2027"},
+            {"name": "เทเบิลเทนนิส", "category": "กีฬาเฉพาะทาง", "format": "knockout", "result": "set_based", "max_sets": 5, "points": 11, "win": 3, "note": "ITTF Laws: เกมละ 11 แต้ม ต้องชนะห่าง 2; ค่าเริ่มต้นระบบใช้ 3 ใน 5 เกม"},
+            {"name": "บาสเกตบอล", "category": "กีฬาทีม", "format": "round_robin", "result": "score_only", "max_sets": 0, "points": 0, "win": 0, "note": "FIBA ใช้การบันทึกคะแนนรวมของเกม; งานโรงเรียนปรับเวลาควอเตอร์ตามระเบียบงานได้"},
+            {"name": "กรีฑา", "category": "กรีฑา", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "World Athletics: ใช้ผลเวลา/ระยะ/อันดับ ไม่ใช่ระบบเซต"},
+            {"name": "วิ่ง 50 เมตร", "category": "กรีฑา", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา"},
+            {"name": "วิ่ง 100 เมตร", "category": "กรีฑา", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา"},
+            {"name": "วิ่งผลัด", "category": "กรีฑา", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา"},
+            {"name": "ชักเย่อ", "category": "กีฬาพื้นบ้าน", "format": "knockout", "result": "set_based", "max_sets": 3, "points": 0, "win": 2, "note": "กีฬาโรงเรียน/กีฬาพื้นบ้าน: ค่าเริ่มต้นชนะ 2 ใน 3 เที่ยว ปรับเองได้ตามระเบียบงาน"},
+            {"name": "วิ่งกระสอบ", "category": "กีฬาพื้นบ้าน", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา"},
+            {"name": "วิ่งสามขา", "category": "กีฬาพื้นบ้าน", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา"},
+            {"name": "ประกวดกองเชียร์", "category": "กิจกรรมประกวด", "format": "score_judging", "result": "contest", "max_sets": 0, "points": 0, "win": 0, "note": "ใช้กรรมการให้คะแนน ปรับเกณฑ์ได้ตามงาน"},
+        ]
+
+        def split_names(raw):
+            raw = (raw or "").strip()
+            for sep in ["\r", "\n", "，", "、", ";", "|", "\t"]:
+                raw = raw.replace(sep, ",")
+            names = []
+            for part in raw.split(","):
+                value = part.strip()
+                if value and value not in names:
+                    names.append(value)
+            return names
+
+        def preset_for(name):
+            needle = (name or "").strip().lower()
+            for item in sport_presets:
+                if item["name"].lower() == needle:
+                    return item
+            return None
+
+        def recommendation_for(sport_name, team_count):
+            name = (sport_name or "").lower()
+            if "กรีฑา" in name or "วิ่ง" in name:
+                return {"format": "ranking", "groups": 1, "advance": 0, "best": 0, "text": "กีฬาวัดเวลา/ระยะ แนะนำใช้ Ranking"}
+            if "ประกวด" in name or "กองเชียร์" in name:
+                return {"format": "score_judging", "groups": 1, "advance": 0, "best": 0, "text": "กิจกรรมประกวด แนะนำใช้กรรมการให้คะแนน"}
+            if team_count <= 1:
+                return {"format": "round_robin", "groups": 1, "advance": 0, "best": 0, "text": "ยังมีทีมไม่พอ ต้องเลือกอย่างน้อย 2 ทีม"}
+            if team_count == 2:
+                return {"format": "knockout", "groups": 1, "advance": 1, "best": 0, "text": "2 ทีม แนะนำแข่งชิงทันทีแบบ Knockout"}
+            if team_count <= 5:
+                return {"format": "round_robin", "groups": 1, "advance": 1, "best": 0, "text": f"{team_count} ทีม แนะนำพบกันหมด 1 กลุ่ม รู้ผลชัดและยุติธรรม"}
+            if team_count <= 8:
+                return {"format": "round_robin", "groups": 2, "advance": 2, "best": 0, "text": f"{team_count} ทีม แนะนำแบ่ง 2 กลุ่ม เข้ารอบกลุ่มละ 2 แล้วค่อยสร้าง Knockout"}
+            if team_count <= 12:
+                return {"format": "round_robin", "groups": 4, "advance": 2, "best": 0, "text": f"{team_count} ทีม แนะนำแบ่ง 4 กลุ่ม เอาที่ 1-2 เข้ารอบ หรือเลือกเอาเฉพาะที่ 1 ได้"}
+            return {"format": "round_robin", "groups": 4, "advance": 2, "best": 0, "text": f"{team_count} ทีมขึ้นไป แนะนำแบ่ง 4 กลุ่ม เข้ารอบกลุ่มละ 2"}
+
+        def get_or_create_sport(event, sport_name, preset, result_type, competition_format, max_sets, points_per_set, sets_to_win):
+            sport_name = (sport_name or "").strip()
+            if not sport_name:
+                return None
+            category_name = (preset or {}).get("category") or "กีฬาในงาน"
+            category = SportCategory.query.filter_by(event_id=event.id, name=category_name).first()
+            if not category:
+                category = SportCategory(event_id=event.id, name=category_name, description="สร้างจากหน้าสร้างรายการแข่งขันแบบง่าย")
+                db.session.add(category)
+                db.session.flush()
+            sport = Sport.query.filter_by(event_id=event.id, name=sport_name).first()
+            if not sport:
+                sport = Sport(
+                    event_id=event.id,
+                    category_id=category.id,
+                    name=sport_name,
+                    default_format=competition_format,
+                    result_type=result_type,
+                    max_sets=max_sets if result_type == "set_based" else 0,
+                    points_per_set=points_per_set if result_type == "set_based" else 0,
+                    sets_to_win=sets_to_win if result_type == "set_based" else 0,
+                    note=(preset or {}).get("note", ""),
+                    is_active=True,
+                )
+                db.session.add(sport)
+                db.session.flush()
+            elif not sport.category_id:
+                sport.category_id = category.id
+            return sport
+
+        def get_or_create_division(sport, class_name, gender, competition_format, result_type, max_sets, points_per_set, sets_to_win):
+            class_name = (class_name or "Open").strip() or "Open"
+            gender = (gender or "รวม").strip() or "รวม"
+            division = SportDivision.query.filter_by(sport_id=sport.id, class_name=class_name, gender=gender).first()
+            if not division:
+                division = SportDivision(
+                    sport_id=sport.id,
+                    class_name=class_name,
+                    gender=gender,
+                    competition_format=competition_format,
+                    result_type=result_type,
+                    max_sets=max_sets,
+                    points_per_set=points_per_set,
+                    sets_to_win=sets_to_win,
+                    is_active=True,
+                )
+                db.session.add(division)
+                db.session.flush()
+            else:
+                division.competition_format = competition_format
+                division.result_type = result_type
+                division.max_sets = max_sets
+                division.points_per_set = points_per_set
+                division.sets_to_win = sets_to_win
+                division.is_active = True
+            return division
+
+        def standard_tiebreakers(result_type):
+            if result_type == "set_based":
+                return "points,set_diff,sets_for,point_diff,head_to_head,wins,draw_lots"
+            return "points,goal_diff,goals_for,head_to_head,wins,draw_lots"
+
+        def create_competition_from_sport(sport, selected_teams, class_name, gender, competition_format, result_type, max_sets, points_per_set, sets_to_win, num_groups=None, advance_per_group=None, best_runnerup_count=None, name=None, bracket_pairing="adjacent"):
+            rec = recommendation_for(sport.name, len(selected_teams))
+            competition_format = competition_format or sport.default_format or rec["format"]
+            result_type = result_type or sport.result_type or "score_only"
+            division = get_or_create_division(sport, class_name, gender, competition_format, result_type, max_sets, points_per_set, sets_to_win)
+            comp_name = (name or f"{sport.name} {division.class_name} {division.gender}").strip()
+
+            if competition_format == "knockout":
+                comp = KnockoutCompetition(
+                    event_id=event.id,
+                    sport_division_id=division.id,
+                    name=comp_name,
+                    result_type=result_type,
+                    max_sets=max_sets,
+                    points_per_set=points_per_set,
+                    sets_to_win=sets_to_win,
+                    status="scheduled",
+                )
+                db.session.add(comp)
+                db.session.flush()
+                create_knockout_first_round(comp, selected_teams, pairing_mode=bracket_pairing or "adjacent")
+                return "knockout", comp
+
+            if competition_format == "round_robin":
+                comp = RoundRobinCompetition(
+                    event_id=event.id,
+                    sport_division_id=division.id,
+                    name=comp_name,
+                    num_groups=max(1, safe_int(num_groups) or rec["groups"]),
+                    win_points=3,
+                    draw_points=1,
+                    loss_points=0,
+                    advance_per_group=max(0, safe_int(advance_per_group) if advance_per_group not in (None, "") else rec["advance"]),
+                    best_runnerup_count=max(0, safe_int(best_runnerup_count) if best_runnerup_count not in (None, "") else rec["best"]),
+                    tiebreakers=standard_tiebreakers(result_type),
+                    status="scheduled",
+                )
+                db.session.add(comp)
+                db.session.flush()
+                create_rr_groups(comp)
+                assign_teams_auto(comp, [t.id for t in selected_teams])
+                generate_rr_matches(comp)
+                return "round_robin", comp
+
+            if competition_format == "score_judging":
+                comp = ContestCompetition(event_id=event.id, sport_division_id=division.id, name=comp_name, activity_type=sport.name, status="draft")
+                db.session.add(comp)
+                db.session.flush()
+                for idx, cname in enumerate(["ความพร้อม", "ทักษะ/คุณภาพ", "ความคิดสร้างสรรค์", "ความพร้อมเพรียง", "ภาพรวม"], start=1):
+                    db.session.add(ContestCriterion(competition_id=comp.id, name=cname, max_score=100, sort_order=idx))
+                db.session.add(ContestJudge(competition_id=comp.id, name="กรรมการ 1"))
+                return "score_judging", comp
+
+            comp = RankingCompetition(event_id=event.id, sport_division_id=division.id, name=comp_name, result_mode="rank", status="draft")
+            db.session.add(comp)
+            return "ranking", comp
+
+        if request.method == "POST" and request.form.get("mode") == "bulk_from_library":
+            selected_sport_ids = [safe_int(x) for x in request.form.getlist("selected_sports") if safe_int(x)]
+            if not selected_sport_ids:
+                flash("กรุณาเลือกชนิดกีฬาที่งานนี้จะจัดอย่างน้อย 1 รายการ", "warning")
+                return redirect(url_for("event_competition_wizard", event_id=event.id))
+
+            all_team_ids = [t.id for t in teams]
+            created = []
+            skipped = []
+            first_redirect = None
+
+            for sport_id in selected_sport_ids:
+                sport = Sport.query.filter_by(id=sport_id, event_id=event.id).first()
+                if not sport:
+                    continue
+                team_ids = [safe_int(x) for x in request.form.getlist(f"team_ids_{sport_id}") if safe_int(x)]
+                if not team_ids and request.form.get(f"use_all_teams_{sport_id}") == "1":
+                    team_ids = all_team_ids
+                selected_teams = Team.query.filter(Team.event_id == event.id, Team.id.in_(team_ids)).order_by(Team.name).all() if team_ids else []
+
+                competition_format = request.form.get(f"competition_format_{sport_id}") or sport.default_format or recommendation_for(sport.name, len(selected_teams))["format"]
+                result_type = request.form.get(f"result_type_{sport_id}") or sport.result_type or "score_only"
+                if len(selected_teams) < 2 and competition_format not in ("ranking", "score_judging"):
+                    skipped.append(f"{sport.name} (ทีมไม่พอ)")
+                    continue
+
+                if result_type == "set_based":
+                    max_sets = safe_int(request.form.get(f"max_sets_{sport_id}")) or sport.max_sets or 3
+                    points_per_set = safe_int(request.form.get(f"points_per_set_{sport_id}")) or sport.points_per_set or 21
+                    sets_to_win = safe_int(request.form.get(f"sets_to_win_{sport_id}")) or sport.sets_to_win or ((max_sets // 2) + 1)
+                else:
+                    max_sets = 0
+                    points_per_set = 0
+                    sets_to_win = 0
+
+                class_name = request.form.get(f"class_name_{sport_id}") or "Open"
+                gender = request.form.get(f"gender_{sport_id}") or "รวม"
+                name = request.form.get(f"name_{sport_id}") or None
+                kind, comp = create_competition_from_sport(
+                    sport=sport,
+                    selected_teams=selected_teams,
+                    class_name=class_name,
+                    gender=gender,
+                    competition_format=competition_format,
+                    result_type=result_type,
+                    max_sets=max_sets,
+                    points_per_set=points_per_set,
+                    sets_to_win=sets_to_win,
+                    num_groups=request.form.get(f"num_groups_{sport_id}"),
+                    advance_per_group=request.form.get(f"advance_per_group_{sport_id}"),
+                    best_runnerup_count=request.form.get(f"best_runnerup_count_{sport_id}"),
+                    name=name,
+                    bracket_pairing=request.form.get(f"bracket_pairing_{sport_id}") or "adjacent",
+                )
+                created.append(f"{sport.name} ({len(selected_teams)} ทีม)")
+                if first_redirect is None:
+                    first_redirect = (kind, comp)
+
+            db.session.commit()
+            if created:
+                flash("สร้างการแข่งขันแล้ว: " + ", ".join(created), "success")
+            if skipped:
+                flash("ข้ามรายการ: " + ", ".join(skipped), "warning")
+            if first_redirect and len(created) == 1:
+                kind, comp = first_redirect
+                if kind == "knockout":
+                    return redirect(url_for("knockout_detail", comp_id=comp.id))
+                if kind == "round_robin":
+                    return redirect(url_for("event_competition_program", event_id=comp.event_id) + f"#rr-{comp.id}")
+                if kind == "score_judging":
+                    return redirect(url_for("contest_detail", comp_id=comp.id))
+                return redirect(url_for("ranking_detail", comp_id=comp.id))
+            return redirect(url_for("event_detail", event_id=event.id))
+
+        if request.method == "POST":
+            selected_team_ids = [int(x) for x in request.form.getlist("team_ids") if str(x).isdigit()]
+            selected_teams = Team.query.filter(Team.event_id == event.id, Team.id.in_(selected_team_ids)).order_by(Team.name).all() if selected_team_ids else []
+            if len(selected_teams) < 2 and request.form.get("competition_format") not in ("ranking", "score_judging"):
+                flash("กรุณาเลือกทีมที่ส่งแข่งขันจริงอย่างน้อย 2 ทีม", "danger")
+                return redirect(url_for("event_competition_wizard", event_id=event.id))
+
+            sport_id = safe_int_or_none(request.form.get("sport_id"))
+            sport = Sport.query.filter_by(id=sport_id, event_id=event.id).first() if sport_id else None
+            sport_name = (request.form.get("sport_name") or (sport.name if sport else "")).strip()
+            preset = preset_for(sport_name) or {}
+            class_name = (request.form.get("class_name") or "Open").strip()
+            gender = (request.form.get("gender") or "ผสม").strip()
+            competition_format = request.form.get("competition_format") or recommendation_for(sport_name, len(selected_teams))["format"]
+            result_type = request.form.get("result_type") or (sport.result_type if sport else preset.get("result", "score_only"))
+
+            if result_type == "set_based":
+                max_sets = safe_int(request.form.get("max_sets")) or preset.get("max_sets") or 3
+                points_per_set = safe_int(request.form.get("points_per_set")) or preset.get("points") or 21
+                sets_to_win = safe_int(request.form.get("sets_to_win")) or preset.get("win") or ((max_sets // 2) + 1)
+            else:
+                max_sets = 0
+                points_per_set = 0
+                sets_to_win = 0
+
+            if not sport:
+                sport = get_or_create_sport(event, sport_name, preset, result_type, competition_format, max_sets, points_per_set, sets_to_win)
+            if not sport:
+                flash("กรุณาเลือกหรือกรอกชื่อกีฬา", "danger")
+                return redirect(url_for("event_competition_wizard", event_id=event.id))
+
+            division = SportDivision.query.filter_by(sport_id=sport.id, class_name=class_name, gender=gender).first()
+            if not division:
+                division = SportDivision(
+                    sport_id=sport.id,
+                    class_name=class_name,
+                    gender=gender,
+                    competition_format=competition_format,
+                    result_type=result_type,
+                    max_sets=max_sets,
+                    points_per_set=points_per_set,
+                    sets_to_win=sets_to_win,
+                    is_active=True,
+                )
+                db.session.add(division)
+                db.session.flush()
+            else:
+                division.competition_format = competition_format
+                division.result_type = result_type
+                division.max_sets = max_sets
+                division.points_per_set = points_per_set
+                division.sets_to_win = sets_to_win
+                division.is_active = True
+
+            default_name = f"{sport.name} {class_name} {gender}".strip()
+            comp_name = (request.form.get("name") or default_name).strip()
+
+            if competition_format == "knockout":
+                comp = KnockoutCompetition(
+                    event_id=event.id,
+                    sport_division_id=division.id,
+                    name=comp_name,
+                    result_type=result_type,
+                    max_sets=max_sets,
+                    points_per_set=points_per_set,
+                    sets_to_win=sets_to_win,
+                    status="scheduled",
+                )
+                db.session.add(comp)
+                db.session.flush()
+                create_knockout_first_round(comp, selected_teams, pairing_mode=request.form.get("bracket_pairing") or "adjacent")
+                db.session.commit()
+                flash(f"สร้าง {comp.name} แบบ Knockout จากทีมที่เลือก {len(selected_teams)} ทีมแล้ว", "success")
+                return redirect(url_for("knockout_detail", comp_id=comp.id))
+
+            if competition_format == "round_robin":
+                rec = recommendation_for(sport.name, len(selected_teams))
+                selected_tiebreakers = ",".join(request.form.getlist("tiebreakers"))
+                if not selected_tiebreakers:
+                    selected_tiebreakers = "points,set_diff,sets_for,point_diff,head_to_head,wins,draw_lots" if result_type == "set_based" else "points,goal_diff,goals_for,head_to_head,wins,draw_lots"
+                comp = RoundRobinCompetition(
+                    event_id=event.id,
+                    sport_division_id=division.id,
+                    name=comp_name,
+                    num_groups=max(1, safe_int(request.form.get("num_groups")) or rec["groups"]),
+                    win_points=safe_int(request.form.get("win_points")) if request.form.get("win_points") not in (None, "") else 3,
+                    draw_points=safe_int(request.form.get("draw_points")) if request.form.get("draw_points") not in (None, "") else 1,
+                    loss_points=safe_int(request.form.get("loss_points")) if request.form.get("loss_points") not in (None, "") else 0,
+                    advance_per_group=max(0, safe_int(request.form.get("advance_per_group")) if request.form.get("advance_per_group") not in (None, "") else rec["advance"]),
+                    best_runnerup_count=max(0, safe_int(request.form.get("best_runnerup_count")) if request.form.get("best_runnerup_count") not in (None, "") else rec["best"]),
+                    tiebreakers=selected_tiebreakers,
+                    status="scheduled",
+                )
+                db.session.add(comp)
+                db.session.flush()
+                create_rr_groups(comp)
+                assign_teams_auto(comp, [t.id for t in selected_teams])
+                generate_rr_matches(comp)
+                db.session.commit()
+                flash(f"สร้าง {comp.name} แบบพบกันหมด/แบ่งกลุ่ม จากทีมที่เลือก {len(selected_teams)} ทีมแล้ว", "success")
+                return redirect(url_for("event_competition_program", event_id=comp.event_id) + f"#rr-{comp.id}")
+
+            if competition_format == "score_judging":
+                comp = ContestCompetition(event_id=event.id, sport_division_id=division.id, name=comp_name, activity_type=sport.name, status="draft")
+                db.session.add(comp)
+                db.session.flush()
+                for idx, cname in enumerate(["ความพร้อม", "ทักษะ/คุณภาพ", "ความคิดสร้างสรรค์", "ความพร้อมเพรียง", "ภาพรวม"], start=1):
+                    db.session.add(ContestCriterion(competition_id=comp.id, name=cname, max_score=100, sort_order=idx))
+                db.session.add(ContestJudge(competition_id=comp.id, name="กรรมการ 1"))
+                db.session.commit()
+                flash("สร้างรายการกรรมการให้คะแนนแล้ว", "success")
+                return redirect(url_for("contest_detail", comp_id=comp.id))
+
+            comp = RankingCompetition(event_id=event.id, sport_division_id=division.id, name=comp_name, result_mode=request.form.get("result_mode", "rank"), status="draft")
+            db.session.add(comp)
+            db.session.commit()
+            flash("สร้างรายการ Ranking แล้ว", "success")
+            return redirect(url_for("ranking_detail", comp_id=comp.id))
+
+        return render_template("sports/competition_wizard.html", event=event, teams=teams, sports=sports, divisions=divisions, sport_presets=sport_presets)
+
     @app.route("/events/<int:event_id>/sports/categories/add", methods=["POST"])
     @login_required
     def sport_category_add(event_id):
@@ -1723,6 +2472,114 @@ def register_routes(app):
             db.session.commit()
             flash("เพิ่มชนิดกีฬาแล้ว", "success")
         return redirect(url_for("event_sports", event_id=event.id))
+
+    @app.route("/events/<int:event_id>/sports/quick-add", methods=["POST"])
+    @login_required
+    def sport_quick_add(event_id):
+        """เพิ่มกีฬาเข้าอีเว้นท์แบบผู้ใช้ทั่วไป: จบในฟอร์มเดียว
+        - เลือก/สร้างหมวดกีฬา
+        - เลือกกีฬาเดิมหรือสร้างชนิดกีฬาใหม่
+        - สร้างรุ่นแข่งขัน + เพศหลายรายการพร้อมกัน
+        """
+        event = Event.query.get_or_404(event_id)
+        if not can_access_org(event.organization_id):
+            flash("คุณไม่มีสิทธิ์จัดการกีฬาในงานนี้", "danger")
+            return redirect(url_for("events"))
+
+        def split_lines(raw):
+            raw = (raw or "").strip()
+            for sep in ["\r", "\n", "，", "、", ";", "|", "\t"]:
+                raw = raw.replace(sep, ",")
+            items = []
+            for part in raw.split(","):
+                value = part.strip()
+                if value and value not in items:
+                    items.append(value)
+            return items
+
+        sport_id = safe_int_or_none(request.form.get("sport_id"))
+        sport = Sport.query.filter_by(id=sport_id, event_id=event.id).first() if sport_id else None
+        sport_name = (request.form.get("sport_name") or "").strip()
+        category_name = (request.form.get("category_name") or request.form.get("category_preset") or "").strip()
+        category_id = safe_int_or_none(request.form.get("category_id"))
+        category = SportCategory.query.filter_by(id=category_id, event_id=event.id).first() if category_id else None
+
+        if not category and category_name:
+            category = SportCategory.query.filter_by(event_id=event.id, name=category_name).first()
+            if not category:
+                category = SportCategory(event_id=event.id, name=category_name, description="สร้างจากฟอร์มเพิ่มกีฬาแบบง่าย")
+                db.session.add(category)
+                db.session.flush()
+
+        competition_format = request.form.get("competition_format") or (sport.default_format if sport else "ranking")
+        result_type = request.form.get("result_type") or (sport.result_type if sport else "score_only")
+        if result_type == "set_based":
+            max_sets = safe_int(request.form.get("max_sets")) or (sport.max_sets if sport else 0) or 3
+            points_per_set = safe_int(request.form.get("points_per_set")) or (sport.points_per_set if sport else 0) or 21
+            sets_to_win = safe_int(request.form.get("sets_to_win")) or (sport.sets_to_win if sport else 0) or ((max_sets // 2) + 1)
+        else:
+            max_sets = 0
+            points_per_set = 0
+            sets_to_win = 0
+        max_athletes_per_team = safe_int_or_none(request.form.get("max_athletes_per_team"))
+        note = (request.form.get("note") or "").strip()
+
+        if not sport:
+            if not sport_name:
+                flash("กรุณาเลือกกีฬาเดิม หรือกรอกชื่อชนิดกีฬาใหม่", "danger")
+                return redirect(url_for("event_sports", event_id=event.id) + "#sport-wizard")
+            sport = Sport.query.filter_by(event_id=event.id, name=sport_name).first()
+            if not sport:
+                sport = Sport(
+                    event_id=event.id,
+                    category_id=category.id if category else None,
+                    name=sport_name,
+                    default_format=competition_format,
+                    result_type=result_type,
+                    max_sets=max_sets,
+                    points_per_set=points_per_set,
+                    sets_to_win=sets_to_win,
+                    note=note,
+                    is_active=True,
+                )
+                db.session.add(sport)
+                db.session.flush()
+            elif category and not sport.category_id:
+                sport.category_id = category.id
+        elif category:
+            sport.category_id = category.id
+
+        class_names = split_lines(request.form.get("class_name")) or ["Open"]
+        genders = request.form.getlist("gender") or ["ผสม"]
+
+        added = 0
+        skipped = 0
+        for class_name in class_names:
+            for gender in genders:
+                exists = SportDivision.query.filter_by(sport_id=sport.id, class_name=class_name, gender=gender).first()
+                if exists:
+                    skipped += 1
+                    continue
+                db.session.add(SportDivision(
+                    sport_id=sport.id,
+                    class_name=class_name,
+                    gender=gender,
+                    competition_format=competition_format,
+                    result_type=result_type,
+                    max_sets=max_sets or sport.max_sets or 0,
+                    points_per_set=points_per_set or sport.points_per_set or 0,
+                    sets_to_win=sets_to_win or sport.sets_to_win or 0,
+                    max_athletes_per_team=max_athletes_per_team,
+                    is_active=True,
+                ))
+                added += 1
+
+        db.session.commit()
+        if added:
+            flash(f"เพิ่ม {sport.name} เข้าอีเว้นท์แล้ว {added} รายการ" + (f" · ข้ามรายการซ้ำ {skipped}" if skipped else ""), "success")
+        else:
+            flash(f"ยังไม่มีรายการใหม่สำหรับ {sport.name} เพราะรายการที่เลือกมีอยู่แล้ว", "warning")
+        return redirect(url_for("event_sports", event_id=event.id) + "#sport-wizard")
 
     @app.route("/sports/<int:sport_id>/delete", methods=["POST"])
     @login_required
@@ -1864,8 +2721,8 @@ def register_routes(app):
             flash("คุณไม่มีสิทธิ์จัดการกีฬาในงานนี้", "danger")
             return redirect(url_for("events"))
         seed_default_sports(event)
-        flash("สร้าง/อัปเดตชุดกีฬาและวิธีบันทึกผลให้ตรงชนิดกีฬาแล้ว", "success")
-        return redirect(url_for("event_sports", event_id=event.id))
+        flash("ล้างคลังกีฬาเดิมและสร้างชุดมาตรฐานล่าสุดแล้ว ขั้นต่อไปเลือกกีฬาที่งานนี้จัดและสร้างการแข่งขันจริง", "success")
+        return redirect(url_for("event_competition_wizard", event_id=event.id))
 
 
     @app.route("/events/<int:event_id>/round-robin")
@@ -1913,7 +2770,7 @@ def register_routes(app):
                 comp.status = "scheduled"
                 db.session.commit()
                 flash("สร้างรายการ แบ่งกลุ่มอัตโนมัติ และสร้างตารางพบกันหมดแล้ว", "success")
-                return redirect(url_for("rr_detail", comp_id=comp.id))
+                return redirect(url_for("event_competition_program", event_id=comp.event_id) + f"#rr-{comp.id}")
             db.session.commit()
             flash("สร้างรายการแล้ว กรุณาลากทีมลงกลุ่ม", "success")
             return redirect(url_for("rr_assign", comp_id=comp.id))
@@ -1952,7 +2809,7 @@ def register_routes(app):
             comp.status = "scheduled"
             db.session.commit()
             flash("บันทึกกลุ่มและสร้างตารางพบกันหมดแล้ว", "success")
-            return redirect(url_for("rr_detail", comp_id=comp.id))
+            return redirect(url_for("event_competition_program", event_id=comp.event_id) + f"#rr-{comp.id}")
         assigned_ids = {gt.team_id for g in comp.groups for gt in g.group_teams}
         unassigned = [t for t in teams if t.id not in assigned_ids]
         return render_template("round_robin/assign.html", comp=comp, teams=teams, unassigned=unassigned)
@@ -1974,7 +2831,7 @@ def register_routes(app):
         comp.status = "scheduled"
         db.session.commit()
         flash("สุ่มแบ่งกลุ่มและสร้างตารางใหม่แล้ว", "success")
-        return redirect(url_for("rr_detail", comp_id=comp.id))
+        return redirect(url_for("event_competition_program", event_id=comp.event_id) + f"#rr-{comp.id}")
 
     @app.route("/round-robin/matches/<int:match_id>/score", methods=["POST"])
     @login_required
@@ -1986,8 +2843,9 @@ def register_routes(app):
             return redirect(url_for("events"))
         if rr_result_type(comp) == "set_based":
             return redirect(url_for("rr_match_result", match_id=match.id))
-        match.score_a = safe_int_or_none(request.form.get("score_a"))
-        match.score_b = safe_int_or_none(request.form.get("score_b"))
+        # คะแนนว่างให้ถือเป็น 0 เพื่อใช้งานหน้างานได้เร็ว
+        match.score_a = safe_int(request.form.get("score_a"))
+        match.score_b = safe_int(request.form.get("score_b"))
         match.set_a = None
         match.set_b = None
         match.set_scores = None
@@ -1997,7 +2855,7 @@ def register_routes(app):
         comp.status = "in_progress"
         db.session.commit()
         flash("บันทึกผลแล้ว", "success")
-        return redirect(url_for("rr_detail", comp_id=comp.id) + f"#match-{match.id}")
+        return redirect(url_for("event_competition_program", event_id=comp.event_id) + f"#rr-match-{match.id}")
 
     @app.route("/round-robin/matches/<int:match_id>/result", methods=["GET", "POST"])
     @login_required
@@ -2008,15 +2866,11 @@ def register_routes(app):
             flash("คุณไม่มีสิทธิ์บันทึกผลรายการนี้", "danger")
             return redirect(url_for("events"))
         if rr_result_type(comp) != "set_based":
-            return redirect(url_for("rr_detail", comp_id=comp.id) + f"#match-{match.id}")
+            return redirect(url_for("event_competition_program", event_id=comp.event_id) + f"#rr-match-{match.id}")
         cfg = rr_set_config(comp)
         current_sets = parse_set_scores(match)
         if request.method == "POST":
             set_scores = []
-            sets_a = 0
-            sets_b = 0
-            total_a = 0
-            total_b = 0
             for i in range(1, cfg["max_sets"] + 1):
                 a = safe_int_or_none(request.form.get(f"set_{i}_a"))
                 b = safe_int_or_none(request.form.get(f"set_{i}_b"))
@@ -2025,12 +2879,10 @@ def register_routes(app):
                 a = a or 0
                 b = b or 0
                 set_scores.append({"set": i, "a": a, "b": b})
-                total_a += a
-                total_b += b
-                if a > b:
-                    sets_a += 1
-                elif b > a:
-                    sets_b += 1
+            ok, error_msg, sets_a, sets_b, total_a, total_b, completed_sets = validate_set_score_rows(set_scores, cfg)
+            if not ok:
+                flash(error_msg, "danger")
+                return redirect(url_for("rr_match_result", match_id=match.id))
             match.set_scores = json.dumps(set_scores, ensure_ascii=False) if set_scores else None
             match.score_history = normalize_score_history_payload(request.form.get("score_history"))
             match.set_a = sets_a if set_scores else None
@@ -2040,11 +2892,11 @@ def register_routes(app):
             match.score_b = sets_b if set_scores else None
             match.point_diff = total_a - total_b if set_scores else 0
             match.note = request.form.get("note", "").strip()
-            match.status = "completed" if set_scores and (sets_a >= cfg["sets_to_win"] or sets_b >= cfg["sets_to_win"] or len(set_scores) >= cfg["max_sets"]) else "scheduled"
+            match.status = "completed" if set_scores and (sets_a >= cfg["sets_to_win"] or sets_b >= cfg["sets_to_win"]) else "scheduled"
             comp.status = "in_progress"
             db.session.commit()
             flash("บันทึกคะแนนรายเซตแล้ว", "success")
-            return redirect(url_for("rr_detail", comp_id=comp.id) + f"#match-{match.id}")
+            return redirect(url_for("event_competition_program", event_id=comp.event_id) + f"#rr-match-{match.id}")
         group_standings = calculate_rr_standings(comp).get(match.group_id, [])
         return render_template("round_robin/match_result.html", match=match, comp=comp, cfg=cfg, current_sets=current_sets, score_history=parse_score_history(match), group_standings=group_standings)
 
@@ -2071,14 +2923,14 @@ def register_routes(app):
             return redirect(url_for("events"))
         standings = calculate_rr_standings(comp)
         qualifiers = calculate_rr_qualifiers(comp, standings)
-        teams = [q["team"] for q in qualifiers]
+        teams = build_rr_playoff_seed_order(comp, standings)
         if len(teams) < 2:
             flash("ยังมีทีมเข้ารอบไม่พอสำหรับสร้าง Knockout", "warning")
-            return redirect(url_for("rr_detail", comp_id=comp.id))
+            return redirect(url_for("event_competition_program", event_id=comp.event_id) + f"#rr-{comp.id}")
         existing = KnockoutCompetition.query.filter_by(source_round_robin_id=comp.id).first()
         if existing:
             flash("รายการ Knockout จากรอบนี้มีอยู่แล้ว", "info")
-            return redirect(url_for("knockout_detail", comp_id=existing.id))
+            return redirect(url_for("event_competition_program", event_id=comp.event_id) + f"#ko-{existing.id}")
         div = comp.sport_division
         ko = KnockoutCompetition(
             event_id=comp.event_id,
@@ -2093,10 +2945,10 @@ def register_routes(app):
         )
         db.session.add(ko)
         db.session.flush()
-        create_knockout_first_round(ko, teams)
+        create_knockout_first_round(ko, teams, pairing_mode="adjacent")
         db.session.commit()
-        flash("สร้างรอบ Knockout จากทีมเข้ารอบแล้ว", "success")
-        return redirect(url_for("knockout_detail", comp_id=ko.id))
+        flash("สร้างรอบ Knockout จากทีมเข้ารอบแล้ว (ไขว้สายตามสูตรที่กำหนด)", "success")
+        return redirect(url_for("event_competition_program", event_id=comp.event_id) + f"#ko-{ko.id}")
 
     @app.route("/events/<int:event_id>/knockout")
     @login_required
@@ -2128,11 +2980,12 @@ def register_routes(app):
         if not can_access_org(comp.event.organization_id):
             flash("คุณไม่มีสิทธิ์บันทึกผลรายการนี้", "danger")
             return redirect(url_for("events"))
-        if comp.result_type == "set_based":
+        if knockout_result_type(comp) == "set_based":
             return redirect(url_for("knockout_match_result", match_id=match.id))
         else:
-            match.score_a = safe_int_or_none(request.form.get("score_a"))
-            match.score_b = safe_int_or_none(request.form.get("score_b"))
+            # คะแนนว่างให้ถือเป็น 0 เพื่อใช้งานหน้างานได้เร็ว
+            match.score_a = safe_int(request.form.get("score_a"))
+            match.score_b = safe_int(request.form.get("score_b"))
             match.set_a = None
             match.set_b = None
         match.note = request.form.get("note", "").strip()
@@ -2151,7 +3004,7 @@ def register_routes(app):
         db.session.commit()
         advance_knockout_if_ready(comp)
         flash("บันทึกผล Knockout แล้ว", "success")
-        return redirect(url_for("knockout_detail", comp_id=comp.id) + f"#match-{match.id}")
+        return redirect(url_for("event_competition_program", event_id=comp.event_id) + f"#ko-match-{match.id}")
 
     @app.route("/knockout/matches/<int:match_id>/result", methods=["GET", "POST"])
     @login_required
@@ -2161,16 +3014,12 @@ def register_routes(app):
         if not can_access_org(comp.event.organization_id):
             flash("คุณไม่มีสิทธิ์บันทึกผลรายการนี้", "danger")
             return redirect(url_for("events"))
-        if comp.result_type != "set_based":
-            return redirect(url_for("knockout_detail", comp_id=comp.id) + f"#match-{match.id}")
+        if knockout_result_type(comp) != "set_based":
+            return redirect(url_for("event_competition_program", event_id=comp.event_id) + f"#ko-match-{match.id}")
         cfg = knockout_set_config(comp)
         current_sets = parse_set_scores(match)
         if request.method == "POST":
             set_scores = []
-            sets_a = 0
-            sets_b = 0
-            total_a = 0
-            total_b = 0
             for i in range(1, cfg["max_sets"] + 1):
                 a = safe_int_or_none(request.form.get(f"set_{i}_a"))
                 b = safe_int_or_none(request.form.get(f"set_{i}_b"))
@@ -2179,12 +3028,10 @@ def register_routes(app):
                 a = a or 0
                 b = b or 0
                 set_scores.append({"set": i, "a": a, "b": b})
-                total_a += a
-                total_b += b
-                if a > b:
-                    sets_a += 1
-                elif b > a:
-                    sets_b += 1
+            ok, error_msg, sets_a, sets_b, total_a, total_b, completed_sets = validate_set_score_rows(set_scores, cfg)
+            if not ok:
+                flash(error_msg, "danger")
+                return redirect(url_for("knockout_match_result", match_id=match.id))
             match.set_scores = json.dumps(set_scores, ensure_ascii=False) if set_scores else None
             match.score_history = normalize_score_history_payload(request.form.get("score_history"))
             match.set_a = sets_a if set_scores else None
@@ -2199,7 +3046,7 @@ def register_routes(app):
             elif match.team_b_id and not match.team_a_id:
                 match.winner_team_id = match.team_b_id
                 match.status = "completed"
-            elif set_scores and sets_a != sets_b and (sets_a >= cfg["sets_to_win"] or sets_b >= cfg["sets_to_win"] or len(set_scores) >= cfg["max_sets"]):
+            elif set_scores and sets_a != sets_b and (sets_a >= cfg["sets_to_win"] or sets_b >= cfg["sets_to_win"]):
                 match.winner_team_id = match.team_a_id if sets_a > sets_b else match.team_b_id
                 match.status = "completed"
             else:
@@ -2208,8 +3055,26 @@ def register_routes(app):
             db.session.commit()
             advance_knockout_if_ready(comp)
             flash("บันทึกคะแนนรายเซต Knockout แล้ว", "success")
-            return redirect(url_for("knockout_detail", comp_id=comp.id) + f"#match-{match.id}")
+            return redirect(url_for("event_competition_program", event_id=comp.event_id) + f"#ko-match-{match.id}")
         return render_template("knockout/match_result.html", match=match, comp=comp, cfg=cfg, current_sets=current_sets, score_history=parse_score_history(match))
+
+    @app.route("/knockout/<int:comp_id>/advance", methods=["POST"])
+    @login_required
+    def knockout_advance(comp_id):
+        comp = KnockoutCompetition.query.get_or_404(comp_id)
+        if not can_access_org(comp.event.organization_id):
+            flash("คุณไม่มีสิทธิ์จัดรอบ Knockout", "danger")
+            return redirect(url_for("events"))
+        before_count = KnockoutMatch.query.filter_by(competition_id=comp.id).count()
+        advance_knockout_if_ready(comp)
+        after_count = KnockoutMatch.query.filter_by(competition_id=comp.id).count()
+        if after_count > before_count:
+            flash("สร้างรอบถัดไปแล้ว", "success")
+        elif (comp.status or "") == "completed":
+            flash("รายการ Knockout นี้จบแล้ว", "success")
+        else:
+            flash("ยังสร้างรอบถัดไปไม่ได้ กรุณาบันทึกผู้ชนะในรอบปัจจุบันให้ครบก่อน", "warning")
+        return redirect(url_for("event_competition_program", event_id=comp.event_id) + f"#ko-{comp.id}")
 
 
     @app.route("/knockout/<int:comp_id>/delete", methods=["POST"])
@@ -2630,6 +3495,24 @@ def register_routes(app):
         flash(f"สร้างรายชื่อเกียรติบัตร {created} รายการ", "success")
         return redirect(url_for("event_certificates", event_id=event.id))
 
+    @app.route("/events/<int:event_id>/certificates/sync-results", methods=["POST"])
+    @login_required
+    def certificate_sync_results(event_id):
+        event = Event.query.get_or_404(event_id)
+        if not can_access_org(event.organization_id):
+            flash("คุณไม่มีสิทธิ์เข้าถึงงานนี้", "danger")
+            return redirect(url_for("events"))
+        denied = check_feature_or_redirect(event, "allow_certificates", "Certificate")
+        if denied:
+            return denied
+        template_id = safe_int_or_none(request.form.get("template_id"))
+        tpl, created, available = sync_result_certificates_for_event(event, template_id=template_id)
+        if available == 0:
+            flash("ยังไม่มีผลการแข่งขันที่สรุปอันดับ 1-3 แล้ว จึงยังไม่สร้างเกียรติบัตร", "warning")
+        else:
+            flash(f"ดึงผลการแข่งขันแล้ว สร้าง/อัปเดตรายชื่อเกียรติบัตร {created} รายการ จากผล {available} รายการ", "success")
+        return redirect(url_for("event_certificates", event_id=event.id))
+
     @app.route("/events/<int:event_id>/certificates/manual", methods=["POST"])
     @login_required
     def certificate_manual(event_id):
@@ -2902,6 +3785,14 @@ def register_routes(app):
             flash(f"นำเข้าข้อมูลแล้ว {count} รายการ", "success")
             return redirect(url_for("event_registrations", event_id=event.id))
         return render_template("registrations/import.html", event=event)
+
+    @app.route("/team-portal/<int:team_id>/certificates")
+    def portal_certificates(team_id):
+        team = require_team_portal_code(team_id)
+        if not team:
+            return redirect(url_for("team_entry"))
+        certs = CertificateRecipient.query.filter_by(team_id=team.id, is_revoked=False).order_by(CertificateRecipient.issued_at.desc()).all()
+        return render_template("team_portal/certificates.html", team=team, event=team.event, certs=certs)
 
     @app.route("/team-portal/<int:team_id>/athletes")
     def portal_athletes(team_id):
@@ -3605,6 +4496,15 @@ def import_registrations_from_excel(event, file):
     db.session.commit()
     return count
 
+def require_team_portal_code(team_id):
+    from models import Team
+    team = Team.query.get_or_404(team_id)
+    if session.get(f"team_access_{team.id}") != team.access_code:
+        flash("กรุณากรอกรหัสทีมก่อน", "warning")
+        return None
+    return team
+
+
 def require_team_portal_access(team_id):
     from models import Team
     team = Team.query.get_or_404(team_id)
@@ -3668,15 +4568,27 @@ def safe_int_or_none(value):
         return None
 
 
-def seed_default_sports(event, force_update=True):
-    """สร้าง/อัปเดตชุดกีฬาโรงเรียนให้ตรงกับชนิดกีฬาจริง
+def seed_default_sports(event, force_update=True, reset_catalog=True):
+    """ล้างคลังกีฬาเดิมของอีเว้นท์ แล้วสร้างชุดมาตรฐานใหม่ที่ตรวจจากกติกากลางล่าสุด
 
-    force_update=True จะซ่อมข้อมูลเก่าที่เคยเป็น score_only ทั้งหมด เช่น กรีฑา/กีฬาพื้นบ้าน
-    ให้กลับเป็น ranking และวอลเลย์บอล/ตะกร้อ/แบดมินตัน/เทเบิลเทนนิสให้เป็น set_based
-    โดยไม่ลบผลการแข่งขันเดิม
+    แนวคิดใหม่: คลังมีเฉพาะ "ชนิดกีฬา + ค่าเริ่มต้นกติกา" ไม่สร้างรายการย่อยจำนวนมากตั้งแต่ต้น
+    การแข่งขันจริงให้ไปสร้างที่หน้า /competitions/quick-new แล้วเลือกรุ่น/ทีม/ระบบแข่งขันตอนนั้น
     """
-    from models import SportCategory, Sport, SportDivision
-    category_names = ["กรีฑา", "กีฬาทีม", "กีฬาเฉพาะทาง", "กีฬาพื้นบ้าน", "กิจกรรมประกวด"]
+    from models import (
+        SportCategory, Sport, SportDivision,
+        RoundRobinCompetition, KnockoutCompetition, RankingCompetition, ContestCompetition,
+    )
+
+    if reset_catalog:
+        # ป้องกัน FK ค้าง หากเคยสร้างการแข่งขันผูกกับ division เก่าไว้
+        RoundRobinCompetition.query.filter_by(event_id=event.id).update({RoundRobinCompetition.sport_division_id: None}, synchronize_session=False)
+        KnockoutCompetition.query.filter_by(event_id=event.id).update({KnockoutCompetition.sport_division_id: None}, synchronize_session=False)
+        RankingCompetition.query.filter_by(event_id=event.id).update({RankingCompetition.sport_division_id: None}, synchronize_session=False)
+        ContestCompetition.query.filter_by(event_id=event.id).update({ContestCompetition.sport_division_id: None}, synchronize_session=False)
+        SportCategory.query.filter_by(event_id=event.id).delete(synchronize_session=False)
+        db.session.flush()
+
+    category_names = ["กีฬาทีม", "กีฬาเฉพาะทาง", "กรีฑา", "กีฬาพื้นบ้าน", "กิจกรรมประกวด"]
     categories = {}
     for i, name in enumerate(category_names, start=1):
         cat = SportCategory.query.filter_by(event_id=event.id, name=name).first()
@@ -3686,101 +4598,59 @@ def seed_default_sports(event, force_update=True):
             db.session.flush()
         categories[name] = cat
 
-    def sport(name, category, default_format, result_type="score_only", max_sets=0, points_per_set=0, sets_to_win=0, note=""):
-        item = Sport.query.filter_by(event_id=event.id, name=name).first()
+    # ค่ากติกากลางตรวจล่าสุด: 2026-06-19
+    # หมายเหตุ: schema ปัจจุบันยังไม่มีช่อง decisive_set_points/deuce_cap จึงเก็บรายละเอียดไว้ใน note ก่อน
+    presets = [
+        {"name": "ฟุตบอล", "category": "กีฬาทีม", "format": "round_robin", "result": "score_only", "max_sets": 0, "points": 0, "win": 0, "note": "IFAB Laws of the Game 2025/26: บันทึกผลเป็นประตูได้-เสีย ระยะเวลาแข่งขันปรับตามระเบียบงานได้ | checked 2026-06-19"},
+        {"name": "ฟุตซอล", "category": "กีฬาทีม", "format": "round_robin", "result": "score_only", "max_sets": 0, "points": 0, "win": 0, "note": "FIFA Futsal Laws of the Game 2025/26: ปกติ 2 ครึ่ง ครึ่งละ 20 นาที บันทึกผลเป็นประตูได้-เสีย | checked 2026-06-19"},
+        {"name": "วอลเลย์บอล", "category": "กีฬาทีม", "format": "round_robin", "result": "set_based", "max_sets": 5, "points": 25, "win": 3, "note": "FIVB Official Volleyball Rules 2025-2028: ชนะ 3 เซต; เซต 1-4 ถึง 25 แต้ม ต้องห่าง 2; เซตตัดสินถึง 15 แต้ม | checked 2026-06-19"},
+        {"name": "เซปักตะกร้อ", "category": "กีฬาทีม", "format": "round_robin", "result": "set_based", "max_sets": 3, "points": 15, "win": 2, "note": "ISTAF Law of the Game 2024: ชนะ 2 ใน 3 เซต; เซตละ 15 แต้ม; 14-14 เล่นถึง 17 แต้ม | checked 2026-06-19"},
+        {"name": "เปตอง", "category": "กีฬาเฉพาะทาง", "format": "knockout", "result": "score_only", "max_sets": 0, "points": 13, "win": 0, "note": "FIPJP Official Rules: เกมปกติถึง 13 คะแนน; ลีก/รอบคัดเลือกอาจกำหนด 11 คะแนนตามระเบียบงาน | checked 2026-06-19"},
+        {"name": "แบดมินตัน", "category": "กีฬาเฉพาะทาง", "format": "knockout", "result": "set_based", "max_sets": 3, "points": 21, "win": 2, "note": "BWF Laws ปัจจุบัน: 2 ใน 3 เกม เกมละ 21 แต้ม; BWF อนุมัติ 3x15 เริ่ม 4 ม.ค. 2027 | checked 2026-06-19"},
+        {"name": "เทเบิลเทนนิส", "category": "กีฬาเฉพาะทาง", "format": "knockout", "result": "set_based", "max_sets": 5, "points": 11, "win": 3, "note": "ITTF Laws: เกมละ 11 แต้ม ต้องชนะห่าง 2; ค่าเริ่มต้นระบบใช้ 3 ใน 5 เกม | checked 2026-06-19"},
+        {"name": "บาสเกตบอล", "category": "กีฬาทีม", "format": "round_robin", "result": "score_only", "max_sets": 0, "points": 0, "win": 0, "note": "FIBA: บันทึกคะแนนรวมของเกม; งานโรงเรียนปรับเวลาควอเตอร์ตามระเบียบงานได้ | checked 2026-06-19"},
+        {"name": "กรีฑา", "category": "กรีฑา", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "World Athletics: ใช้ผลเวลา/ระยะ/อันดับ ไม่ใช่ระบบเซต | checked 2026-06-19"},
+        {"name": "วิ่ง 50 เมตร", "category": "กรีฑา", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา | checked 2026-06-19"},
+        {"name": "วิ่ง 100 เมตร", "category": "กรีฑา", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา | checked 2026-06-19"},
+        {"name": "วิ่งผลัด", "category": "กรีฑา", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา | checked 2026-06-19"},
+        {"name": "ชักเย่อ", "category": "กีฬาพื้นบ้าน", "format": "knockout", "result": "set_based", "max_sets": 3, "points": 0, "win": 2, "note": "กีฬาโรงเรียน/กีฬาพื้นบ้าน: ค่าเริ่มต้นชนะ 2 ใน 3 เที่ยว ปรับเองได้ตามระเบียบงาน | checked 2026-06-19"},
+        {"name": "วิ่งกระสอบ", "category": "กีฬาพื้นบ้าน", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา | checked 2026-06-19"},
+        {"name": "วิ่งสามขา", "category": "กีฬาพื้นบ้าน", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา | checked 2026-06-19"},
+        {"name": "ประกวดกองเชียร์", "category": "กิจกรรมประกวด", "format": "score_judging", "result": "contest", "max_sets": 0, "points": 0, "win": 0, "note": "ใช้กรรมการให้คะแนน ปรับเกณฑ์ได้ตามงาน | checked 2026-06-19"},
+    ]
+
+    for index, rec in enumerate(presets, start=1):
+        sport = Sport.query.filter_by(event_id=event.id, name=rec["name"]).first()
         data = dict(
-            category_id=categories[category].id,
-            default_format=default_format,
-            result_type=result_type,
-            max_sets=max_sets,
-            points_per_set=points_per_set,
-            sets_to_win=sets_to_win,
-            note=note,
+            category_id=categories[rec["category"]].id,
+            default_format=rec["format"],
+            result_type=rec["result"],
+            max_sets=rec["max_sets"] if rec["result"] == "set_based" else 0,
+            points_per_set=rec["points"] if rec["result"] == "set_based" else 0,
+            sets_to_win=rec["win"] if rec["result"] == "set_based" else 0,
+            note=rec["note"],
             is_active=True,
         )
-        if not item:
-            item = Sport(event_id=event.id, name=name, **data)
-            db.session.add(item)
+        if not sport:
+            sport = Sport(event_id=event.id, name=rec["name"], **data)
+            db.session.add(sport)
             db.session.flush()
-        elif force_update:
-            for k, v in data.items():
-                setattr(item, k, v)
         else:
             for k, v in data.items():
-                if getattr(item, k, None) in (None, "", 0, False):
-                    setattr(item, k, v)
-        return item
+                setattr(sport, k, v)
 
-    def divisions(sp, classes, genders, fmt=None, result_type=None, max_sets=None, points_per_set=None, sets_to_win=None, max_athletes_per_team=None):
-        fmt = fmt or sp.default_format
-        result_type = result_type or sp.result_type
-        max_sets = sp.max_sets if max_sets is None else max_sets
-        points_per_set = sp.points_per_set if points_per_set is None else points_per_set
-        sets_to_win = sp.sets_to_win if sets_to_win is None else sets_to_win
-        for cls in classes:
-            for gender in genders:
-                div = SportDivision.query.filter_by(sport_id=sp.id, class_name=cls, gender=gender).first()
-                if not div:
-                    div = SportDivision(sport_id=sp.id, class_name=cls, gender=gender)
-                    db.session.add(div)
-                if force_update or not div.competition_format:
-                    div.competition_format = fmt
-                if force_update or not div.result_type:
-                    div.result_type = result_type
-                if force_update or not div.max_sets:
-                    div.max_sets = max_sets or 0
-                if force_update or not div.points_per_set:
-                    div.points_per_set = points_per_set or 0
-                if force_update or not div.sets_to_win:
-                    div.sets_to_win = sets_to_win or 0
-                if max_athletes_per_team is not None:
-                    div.max_athletes_per_team = max_athletes_per_team
-                div.is_active = True
-
-    grade_classes = ["อนุบาล", "ป.1", "ป.2", "ป.3", "ป.4", "ป.5", "ป.6", "ม.1", "ม.2", "ม.3"]
-    school_level_classes = ["อนุบาล", "ประถมต้น", "ประถมปลาย", "มัธยมต้น", "มัธยมปลาย"]
-    team_level_classes = ["ประถมต้น", "ประถมปลาย", "มัธยมต้น", "มัธยมปลาย"]
-    genders_2 = ["ชาย", "หญิง"]
-    genders_3 = ["ชาย", "หญิง", "ผสม"]
-
-    # กรีฑา: ตัดสินด้วยอันดับ/เวลา ไม่ใช่ score_only
-    for run in ["วิ่ง 50 เมตร", "วิ่ง 80 เมตร", "วิ่ง 100 เมตร", "วิ่ง 200 เมตร", "วิ่งผลัด"]:
-        divisions(
-            sport(run, "กรีฑา", "ranking", "ranking", note="บันทึกอันดับ/เวลา เหมาะกับลู่-ลาน"),
-            grade_classes,
-            genders_2,
-            "ranking",
-            "ranking",
-        )
-
-    # กีฬาพื้นบ้าน: จัดอันดับ/เวลา/คะแนนกิจกรรม ไม่ใช่ระบบยิงคะแนนคู่แข่งขัน
-    for name in ["ชักเย่อ", "วิ่งกระสอบ", "วิ่งสามขา", "วิ่งเปี้ยว"]:
-        divisions(
-            sport(name, "กีฬาพื้นบ้าน", "ranking", "ranking", note="บันทึกอันดับหรือเวลาตามผลกิจกรรม"),
-            school_level_classes,
-            genders_3,
-            "ranking",
-            "ranking",
-        )
-
-    # ฟุตบอล/ฟุตซอล: พบกันหมด + สกอร์ประตู
-    for name in ["ฟุตซอล", "ฟุตบอล"]:
-        divisions(
-            sport(name, "กีฬาทีม", "round_robin", "score_only", note="บันทึกประตูได้-เสีย"),
-            team_level_classes,
-            genders_2,
-            "round_robin",
-            "score_only",
-        )
-
-    # วอลเลย์บอล/ตะกร้อ: พบกันหมด + รายเซต
-    divisions(sport("วอลเลย์บอล", "กีฬาทีม", "round_robin", "set_based", 5, 25, 3, "บันทึกคะแนนรายเซต"), team_level_classes, genders_2, "round_robin", "set_based", 5, 25, 3)
-    divisions(sport("เซปักตะกร้อ", "กีฬาทีม", "round_robin", "set_based", 3, 21, 2, "บันทึกคะแนนรายเซต"), team_level_classes, genders_2, "round_robin", "set_based", 3, 21, 2)
-
-    # กีฬาเฉพาะทาง
-    divisions(sport("เปตอง", "กีฬาเฉพาะทาง", "knockout", "score_only", note="บันทึกแต้มต่อเกม"), ["ประถมต้น", "ประถมปลาย", "มัธยมต้น", "มัธยมปลาย", "Open"], genders_3, "knockout", "score_only")
-    divisions(sport("แบดมินตัน", "กีฬาเฉพาะทาง", "knockout", "set_based", 3, 21, 2, "2 ใน 3 เกม เกมละ 21 แต้ม"), ["ประถมต้น", "ประถมปลาย", "มัธยมต้น", "มัธยมปลาย", "Open"], genders_3, "knockout", "set_based", 3, 21, 2)
-    divisions(sport("เทเบิลเทนนิส", "กีฬาเฉพาะทาง", "knockout", "set_based", 5, 11, 3, "3 ใน 5 เกม เกมละ 11 แต้ม"), ["ประถมต้น", "ประถมปลาย", "มัธยมต้น", "มัธยมปลาย", "Open"], genders_3, "knockout", "set_based", 5, 11, 3)
+        # สร้างรายการย่อยเริ่มต้นให้น้อยที่สุดเท่านั้น เพื่อไม่ให้หน้าอีเว้นท์รกเป็นร้อยรายการ
+        div = SportDivision.query.filter_by(sport_id=sport.id, class_name="Open", gender="รวม").first()
+        if not div:
+            div = SportDivision(sport_id=sport.id, class_name="Open", gender="รวม")
+            db.session.add(div)
+        div.competition_format = rec["format"]
+        div.result_type = rec["result"]
+        div.max_sets = data["max_sets"]
+        div.points_per_set = data["points_per_set"]
+        div.sets_to_win = data["sets_to_win"]
+        div.max_athletes_per_team = None
+        div.is_active = True
 
     db.session.commit()
 
@@ -3802,20 +4672,34 @@ def knockout_round_name(team_count):
     return f"รอบ {team_count} ทีม"
 
 
-def create_knockout_first_round(comp, teams):
-    """สร้างคู่ Knockout รอบแรกแบบ 1 พบท้ายสุด / 2 พบรองท้ายสุด"""
+def create_knockout_first_round(comp, teams, pairing_mode="balanced"):
+    """สร้างคู่ Knockout รอบแรก
+    - balanced: 1 พบท้ายสุด / 2 พบรองท้ายสุด เหมาะกับการ seed
+    - adjacent: ทีมที่อยู่ติดกันเจอกัน 1-2, 3-4 แล้วผู้ชนะสายติดกันเจอกันต่อ ใช้ง่ายกับกีฬาสี/อบต.
+    """
     from models import KnockoutMatch
     ordered = list(teams)
-    pair_count = (len(ordered) + 1) // 2
     round_name = knockout_round_name(len(ordered))
-    for i in range(pair_count):
-        team_a = ordered[i]
-        team_b = ordered[-(i + 1)] if i != len(ordered) - (i + 1) else None
+
+    pairs = []
+    if pairing_mode == "adjacent":
+        for i in range(0, len(ordered), 2):
+            team_a = ordered[i] if i < len(ordered) else None
+            team_b = ordered[i + 1] if i + 1 < len(ordered) else None
+            pairs.append((team_a, team_b))
+    else:
+        pair_count = (len(ordered) + 1) // 2
+        for i in range(pair_count):
+            team_a = ordered[i]
+            team_b = ordered[-(i + 1)] if i != len(ordered) - (i + 1) else None
+            pairs.append((team_a, team_b))
+
+    for i, (team_a, team_b) in enumerate(pairs, start=1):
         match = KnockoutMatch(
             competition_id=comp.id,
             round_no=1,
             round_name=round_name,
-            match_no=i + 1,
+            match_no=i,
             team_a_id=team_a.id if team_a else None,
             team_b_id=team_b.id if team_b else None,
             status="scheduled",
@@ -3825,6 +4709,39 @@ def create_knockout_first_round(comp, teams):
             match.status = "completed"
         db.session.add(match)
     db.session.flush()
+
+
+def build_rr_playoff_seed_order(comp, standings):
+    """จัดลำดับทีมเข้ารอบให้ไขว้สายแบบกีฬาทั่วไป ก่อนส่งเข้า Knockout แบบ adjacent
+    ตัวอย่าง 2 กลุ่ม อันดับ 1-2: A1-B2, B1-A2
+    ตัวอย่าง 4 กลุ่ม อันดับ 1-2: A1-B2, B1-A2, C1-D2, D1-C2
+    ถ้าเป็นสูตรอื่นหรือมี best runner-up ให้ fallback ตามอันดับที่คำนวณไว้
+    """
+    groups = sorted(comp.groups, key=lambda g: g.sort_order)
+    rows_by_group = {g.id: standings.get(g.id, []) for g in groups}
+
+    if (comp.best_runnerup_count == 0 and comp.advance_per_group == 2 and len(groups) == 2
+            and all(len(rows_by_group.get(g.id, [])) >= 2 for g in groups[:2])):
+        a, b = groups[0], groups[1]
+        return [rows_by_group[a.id][0]["team"], rows_by_group[b.id][1]["team"], rows_by_group[b.id][0]["team"], rows_by_group[a.id][1]["team"]]
+
+    if (comp.best_runnerup_count == 0 and comp.advance_per_group == 2 and len(groups) == 4
+            and all(len(rows_by_group.get(g.id, [])) >= 2 for g in groups[:4])):
+        a, b, c, d = groups[:4]
+        return [
+            rows_by_group[a.id][0]["team"], rows_by_group[b.id][1]["team"],
+            rows_by_group[b.id][0]["team"], rows_by_group[a.id][1]["team"],
+            rows_by_group[c.id][0]["team"], rows_by_group[d.id][1]["team"],
+            rows_by_group[d.id][0]["team"], rows_by_group[c.id][1]["team"],
+        ]
+
+    if (comp.best_runnerup_count == 0 and comp.advance_per_group == 1 and len(groups) == 4
+            and all(len(rows_by_group.get(g.id, [])) >= 1 for g in groups[:4])):
+        a, b, c, d = groups[:4]
+        return [rows_by_group[a.id][0]["team"], rows_by_group[d.id][0]["team"], rows_by_group[b.id][0]["team"], rows_by_group[c.id][0]["team"]]
+
+    qualifiers = calculate_rr_qualifiers(comp, standings)
+    return [q["team"] for q in qualifiers]
 
 
 def advance_knockout_if_ready(comp):
@@ -4056,20 +4973,153 @@ def build_live_board_data(event, setting):
 
 
 
+def competition_sport_name(comp):
+    division = getattr(comp, "sport_division", None)
+    if division and division.sport:
+        return division.sport.name or division.label
+    return getattr(comp, "name", "") or ""
+
+
+def set_rule_profile(sport_name, default_points=0):
+    """กติกาคะแนนรายเซตแบบอ่านจากชื่อกีฬา ใช้กันคะแนนกดค้าง/คะแนนเกินกติกา"""
+    name = (sport_name or "").lower()
+    base = safe_int(default_points) or 21
+    profile = {
+        "rule_code": "generic",
+        "rule_label": "กติกาทั่วไป",
+        "target_points": base,
+        "deciding_target_points": base,
+        "min_margin": 1,
+        "max_point_cap": 0,
+        "rule_note": "ใช้คะแนนตามที่กำหนดในรายการแข่งขัน หากงานนี้มีกติกาเฉพาะสามารถปรับได้ก่อนสร้างรายการ",
+    }
+    if "วอลเล" in name or "volley" in name:
+        profile.update({
+            "rule_code": "volleyball",
+            "rule_label": "วอลเลย์บอล · FIVB 2025-2028",
+            "target_points": 25,
+            "deciding_target_points": 15,
+            "min_margin": 2,
+            "max_point_cap": 0,
+            "rule_note": "เซต 1-4 ถึง 25 แต้ม, เซตตัดสินถึง 15 แต้ม และต้องชนะห่าง 2 แต้ม ไม่มีเพดานคะแนนสูงสุดตามกติกาสากล",
+        })
+    elif "ตะกร้อ" in name or "เซปัก" in name or "takraw" in name:
+        profile.update({
+            "rule_code": "sepak_takraw",
+            "rule_label": "เซปักตะกร้อ · ISTAF 2024",
+            "target_points": 15,
+            "deciding_target_points": 15,
+            "min_margin": 2,
+            "max_point_cap": 17,
+            "rule_note": "เซตละ 15 แต้ม ชนะห่าง 2 แต้ม หาก 14-14 เล่นต่อได้ไม่เกิน 17 แต้ม",
+        })
+    elif "แบด" in name or "badminton" in name:
+        profile.update({
+            "rule_code": "badminton",
+            "rule_label": "แบดมินตัน · BWF 21 คะแนน",
+            "target_points": 21,
+            "deciding_target_points": 21,
+            "min_margin": 2,
+            "max_point_cap": 30,
+            "rule_note": "เกมละ 21 แต้ม ต้องห่าง 2 แต้ม แต่หาก 29-29 ผู้ได้แต้มที่ 30 ชนะเกม",
+        })
+    elif "เทเบิล" in name or "ปิงปอง" in name or "table tennis" in name:
+        profile.update({
+            "rule_code": "table_tennis",
+            "rule_label": "เทเบิลเทนนิส · 11 คะแนน",
+            "target_points": 11,
+            "deciding_target_points": 11,
+            "min_margin": 2,
+            "max_point_cap": 0,
+            "rule_note": "เกมละ 11 แต้ม ต้องชนะห่าง 2 แต้ม ไม่มีเพดานคะแนนสูงสุด",
+        })
+    return profile
+
+
+def build_set_config(comp, max_sets=None, points_per_set=None, sets_to_win=None):
+    division = getattr(comp, "sport_division", None)
+    sport = division.sport if division else None
+    max_sets = safe_int(max_sets) or (division.max_sets if division and division.max_sets else 0) or (sport.max_sets if sport else 0) or getattr(comp, "max_sets", 0) or 3
+    points_per_set = safe_int(points_per_set) or (division.points_per_set if division and division.points_per_set else 0) or (sport.points_per_set if sport else 0) or getattr(comp, "points_per_set", 0) or 21
+    sets_to_win = safe_int(sets_to_win) or (division.sets_to_win if division and division.sets_to_win else 0) or (sport.sets_to_win if sport else 0) or getattr(comp, "sets_to_win", 0) or ((max_sets // 2) + 1)
+    profile = set_rule_profile(competition_sport_name(comp), points_per_set)
+    cfg = {
+        "max_sets": max_sets,
+        "points_per_set": points_per_set,
+        "sets_to_win": sets_to_win,
+        "sport_name": competition_sport_name(comp),
+    }
+    cfg.update(profile)
+    return cfg
+
+
+def set_target_for(cfg, set_no):
+    if cfg.get("rule_code") == "volleyball" and safe_int(set_no) == safe_int(cfg.get("max_sets")):
+        return safe_int(cfg.get("deciding_target_points")) or safe_int(cfg.get("target_points"))
+    return safe_int(cfg.get("target_points")) or safe_int(cfg.get("points_per_set")) or 21
+
+
+def is_completed_set(a, b, set_no, cfg):
+    a = safe_int(a); b = safe_int(b)
+    if a == b:
+        return False, None, None
+    target = set_target_for(cfg, set_no)
+    cap = safe_int(cfg.get("max_point_cap"))
+    margin = max(1, safe_int(cfg.get("min_margin")) or 1)
+    high = max(a, b); low = min(a, b); diff = high - low
+    if cap and high > cap:
+        return False, None, f"เซต {set_no} คะแนนเกินเพดาน {cap} แต้ม"
+    if cfg.get("rule_code") == "sepak_takraw":
+        complete = high >= target and (diff >= margin or (cap and high >= cap))
+    elif cap:
+        complete = (high >= target and diff >= margin) or (high >= cap and high > low)
+    else:
+        complete = high >= target and diff >= margin
+    winner = "a" if a > b else "b"
+    return complete, winner if complete else None, None
+
+
+def validate_set_score_rows(set_scores, cfg):
+    sets_a = sets_b = total_a = total_b = 0
+    completed_sets = 0
+    for row in set_scores:
+        set_no = safe_int(row.get("set")) or 1
+        a = safe_int(row.get("a"))
+        b = safe_int(row.get("b"))
+        total_a += a
+        total_b += b
+        complete, winner, error = is_completed_set(a, b, set_no, cfg)
+        if error:
+            return False, error, 0, 0, 0, 0, 0
+        if complete:
+            completed_sets += 1
+            if winner == "a":
+                sets_a += 1
+            elif winner == "b":
+                sets_b += 1
+    return True, "", sets_a, sets_b, total_a, total_b, completed_sets
+
+
 def rr_result_type(comp):
     division = comp.sport_division
+    value = None
     if division:
-        return division.result_type or (division.sport.result_type if division.sport else "score_only") or "score_only"
-    return "score_only"
+        value = division.result_type or (division.sport.result_type if division.sport else None)
+    name = competition_sport_name(comp)
+    if set_rule_profile(name).get("rule_code") in ("volleyball", "sepak_takraw", "badminton", "table_tennis"):
+        return "set_based"
+    return value or "score_only"
+
+
+def knockout_result_type(comp):
+    value = getattr(comp, "result_type", None)
+    if set_rule_profile(competition_sport_name(comp)).get("rule_code") in ("volleyball", "sepak_takraw", "badminton", "table_tennis"):
+        return "set_based"
+    return value or "score_only"
 
 
 def rr_set_config(comp):
-    division = comp.sport_division
-    sport = division.sport if division else None
-    max_sets = (division.max_sets if division and division.max_sets else 0) or (sport.max_sets if sport else 0) or 3
-    points_per_set = (division.points_per_set if division and division.points_per_set else 0) or (sport.points_per_set if sport else 0) or 21
-    sets_to_win = (division.sets_to_win if division and division.sets_to_win else 0) or (sport.sets_to_win if sport else 0) or ((max_sets // 2) + 1)
-    return {"max_sets": max_sets, "points_per_set": points_per_set, "sets_to_win": sets_to_win}
+    return build_set_config(comp)
 
 
 def parse_set_scores(match):
@@ -4080,6 +5130,25 @@ def parse_set_scores(match):
         return data if isinstance(data, list) else []
     except Exception:
         return []
+
+
+def set_score_rows(match):
+    """คืนคะแนนรายเซตในรูปแบบที่ template อ่านง่าย ไม่โชว์ JSON ดิบ"""
+    rows = []
+    for idx, row in enumerate(parse_set_scores(match), start=1):
+        if not isinstance(row, dict):
+            continue
+        set_no = safe_int(row.get("set")) or idx
+        a = safe_int(row.get("a"))
+        b = safe_int(row.get("b"))
+        if a > b:
+            winner = "a"
+        elif b > a:
+            winner = "b"
+        else:
+            winner = "draw"
+        rows.append({"set": set_no, "a": a, "b": b, "winner": winner})
+    return rows
 
 
 def parse_score_history(match):
@@ -4118,10 +5187,7 @@ def normalize_score_history_payload(raw):
 
 
 def knockout_set_config(comp):
-    max_sets = comp.max_sets or 3
-    points_per_set = comp.points_per_set or 21
-    sets_to_win = comp.sets_to_win or ((max_sets // 2) + 1)
-    return {"max_sets": max_sets, "points_per_set": points_per_set, "sets_to_win": sets_to_win}
+    return build_set_config(comp, comp.max_sets, comp.points_per_set, comp.sets_to_win)
 
 
 def set_point_totals(match):
@@ -4212,6 +5278,135 @@ def rr_sort_key(comp, row):
         "draw_lots": 0,
     }
     return tuple(mapping.get(k, 0) for k in comp.tiebreaker_list) + (row["team"].name,)
+
+
+def build_rr_next_round_preview(comp, standings=None, use_actual=False):
+    """สร้างภาพรวมสายรอบต่อไปแบบตายตัวให้เห็นตั้งแต่ก่อนแข่งจบ
+    ใช้เฉพาะเพื่อแสดง/พิมพ์โปรแกรม ไม่เปลี่ยนข้อมูลในฐานข้อมูล
+    """
+    standings = standings or {}
+    groups = sorted(comp.groups, key=lambda g: g.sort_order or 0)
+
+    def entry(group, rank):
+        label = f"อันดับ {rank} กลุ่ม {group.name}"
+        team = ""
+        rows = standings.get(group.id, [])
+        if use_actual and len(rows) >= rank:
+            team = rows[rank - 1]["team"].name
+        return {"label": label, "team": team}
+
+    def best_runnerup(idx=1):
+        label = "รองดีที่สุด" if idx == 1 else f"รองดีที่สุด {idx}"
+        team = ""
+        if use_actual:
+            qualifiers = calculate_rr_qualifiers(comp, standings)
+            bests = [q for q in qualifiers if str(q.get("reason", "")).startswith("Best Runner-up")]
+            if len(bests) >= idx:
+                team = bests[idx - 1]["team"].name
+        return {"label": label, "team": team}
+
+    seeds = []
+    if comp.best_runnerup_count == 0 and comp.advance_per_group == 2 and len(groups) == 2:
+        a, b = groups[:2]
+        seeds = [entry(a, 1), entry(b, 2), entry(b, 1), entry(a, 2)]
+    elif comp.best_runnerup_count == 0 and comp.advance_per_group == 2 and len(groups) == 4:
+        a, b, c, d = groups[:4]
+        seeds = [entry(a, 1), entry(b, 2), entry(b, 1), entry(a, 2), entry(c, 1), entry(d, 2), entry(d, 1), entry(c, 2)]
+    elif comp.best_runnerup_count == 0 and comp.advance_per_group == 1 and len(groups) == 4:
+        a, b, c, d = groups[:4]
+        seeds = [entry(a, 1), entry(d, 1), entry(b, 1), entry(c, 1)]
+    elif comp.best_runnerup_count == 1 and comp.advance_per_group == 1 and len(groups) == 3:
+        a, b, c = groups[:3]
+        seeds = [entry(a, 1), best_runnerup(1), entry(b, 1), entry(c, 1)]
+    else:
+        for g in groups:
+            for r in range(1, (comp.advance_per_group or 1) + 1):
+                seeds.append(entry(g, r))
+        for i in range(1, (comp.best_runnerup_count or 0) + 1):
+            seeds.append(best_runnerup(i))
+
+    # ทำจำนวนทีมเข้ารอบให้เป็นเลขคู่เพื่อวาดสายง่าย
+    if len(seeds) % 2 == 1:
+        seeds.append({"label": "BYE", "team": ""})
+
+    rounds = []
+    pair_rows = []
+    for idx in range(0, len(seeds), 2):
+        pair_rows.append({
+            "match_no": (idx // 2) + 1,
+            "a": seeds[idx],
+            "b": seeds[idx + 1] if idx + 1 < len(seeds) else {"label": "BYE", "team": ""},
+        })
+    if pair_rows:
+        first_name = knockout_round_name(len(seeds)) if len(seeds) > 2 else "ชิงชนะเลิศ"
+        rounds.append({"name": first_name, "matches": pair_rows})
+
+    current_count = len(pair_rows)
+    previous_name = first_name if pair_rows else ""
+    while current_count > 1:
+        next_rows = []
+        for idx in range(0, current_count, 2):
+            left = {"label": f"ผู้ชนะคู่ {idx + 1} ({previous_name})", "team": ""}
+            right = {"label": f"ผู้ชนะคู่ {idx + 2} ({previous_name})", "team": ""} if idx + 1 < current_count else {"label": "BYE", "team": ""}
+            next_rows.append({"match_no": (idx // 2) + 1, "a": left, "b": right})
+        next_count = len(next_rows)
+        round_name = "ชิงชนะเลิศ" if next_count == 1 else knockout_round_name(next_count * 2)
+        rounds.append({"name": round_name, "matches": next_rows})
+        current_count = next_count
+        previous_name = round_name
+
+    if len(seeds) >= 4:
+        rounds.append({
+            "name": "ชิงอันดับ 3 (ถ้าเปิดใช้)",
+            "matches": [{
+                "match_no": 1,
+                "a": {"label": "ผู้แพ้รอบรองคู่ 1", "team": ""},
+                "b": {"label": "ผู้แพ้รอบรองคู่ 2", "team": ""},
+            }]
+        })
+
+    return {
+        "title": f"เส้นทางรอบต่อไป: {comp.num_groups} กลุ่ม · เข้ารอบกลุ่มละ {comp.advance_per_group}" + (f" + รองดีที่สุด {comp.best_runnerup_count}" if comp.best_runnerup_count else ""),
+        "rounds": rounds,
+        "seed_count": len(seeds),
+    }
+
+
+def build_knockout_future_preview(comp):
+    """แสดงสายรอบถัดไปของ Knockout ล่วงหน้าโดยไม่ต้องสร้าง match จริงใน DB"""
+    matches = sorted(comp.matches or [], key=lambda m: ((m.round_no or 0), (m.match_no or 0)))
+    if not matches:
+        return {"rounds": []}
+    first_round_no = sorted({m.round_no for m in matches})[0]
+    first_matches = [m for m in matches if m.round_no == first_round_no]
+    current_count = len(first_matches)
+    if current_count <= 1:
+        return {"rounds": []}
+    previous_name = first_matches[0].round_name if first_matches else "รอบแรก"
+    rounds = []
+    while current_count > 1:
+        rows = []
+        for idx in range(0, current_count, 2):
+            rows.append({
+                "match_no": (idx // 2) + 1,
+                "a": {"label": f"ผู้ชนะคู่ {idx + 1} ({previous_name})", "team": ""},
+                "b": {"label": f"ผู้ชนะคู่ {idx + 2} ({previous_name})", "team": ""} if idx + 1 < current_count else {"label": "BYE", "team": ""},
+            })
+        next_count = len(rows)
+        round_name = "ชิงชนะเลิศ" if next_count == 1 else knockout_round_name(next_count * 2)
+        rounds.append({"name": round_name, "matches": rows})
+        current_count = next_count
+        previous_name = round_name
+    if len(first_matches) >= 2:
+        rounds.append({
+            "name": "ชิงอันดับ 3 (ถ้าเปิดใช้)",
+            "matches": [{
+                "match_no": 1,
+                "a": {"label": "ผู้แพ้รอบรองคู่ 1", "team": ""},
+                "b": {"label": "ผู้แพ้รอบรองคู่ 2", "team": ""},
+            }],
+        })
+    return {"rounds": rounds}
 
 
 def calculate_rr_qualifiers(comp, standings):
@@ -4314,8 +5509,86 @@ def medal_for_position(position):
     return None
 
 
+def competition_matches_completed(matches):
+    matches = list(matches or [])
+    if not matches:
+        return False
+    for match in matches:
+        status_done = (match.status or "").lower() in ("completed", "finished", "done")
+        has_score = False
+        if getattr(match, "set_a", None) is not None and getattr(match, "set_b", None) is not None:
+            has_score = True
+        if getattr(match, "score_a", None) is not None and getattr(match, "score_b", None) is not None:
+            has_score = True
+        if getattr(match, "winner_team_id", None):
+            has_score = True
+        if not (status_done or has_score):
+            return False
+    return True
+
+
+def completed_knockout_match(match):
+    if not match:
+        return False
+    if match.winner_team_id:
+        return True
+    if (match.status or "").lower() in ("completed", "finished", "done"):
+        return True
+    if match.set_a is not None and match.set_b is not None and match.set_a != match.set_b:
+        return True
+    if match.score_a is not None and match.score_b is not None and match.score_a != match.score_b:
+        return True
+    return False
+
+
+def match_loser_team(match):
+    if not match:
+        return None
+    if match.winner_team_id:
+        if match.team_a_id == match.winner_team_id:
+            return match.team_b
+        if match.team_b_id == match.winner_team_id:
+            return match.team_a
+    if match.set_a is not None and match.set_b is not None and match.set_a != match.set_b:
+        return match.team_a if match.set_a < match.set_b else match.team_b
+    if match.score_a is not None and match.score_b is not None and match.score_a != match.score_b:
+        return match.team_a if match.score_a < match.score_b else match.team_b
+    return None
+
+
+def match_winner_team(match):
+    if not match:
+        return None
+    if match.winner_team:
+        return match.winner_team
+    if match.set_a is not None and match.set_b is not None and match.set_a != match.set_b:
+        return match.team_a if match.set_a > match.set_b else match.team_b
+    if match.score_a is not None and match.score_b is not None and match.score_a != match.score_b:
+        return match.team_a if match.score_a > match.score_b else match.team_b
+    return None
+
+
+def result_entry(source, comp, team, rank, medal, detail="", recipient_name="", athlete_id=None, coach_id=None):
+    division = getattr(comp, "sport_division", None)
+    return {
+        "source": source,
+        "competition": comp.name,
+        "sport": division.sport.name if division else "-",
+        "class_name": division.class_name if division else "-",
+        "gender": division.gender if division else "-",
+        "team": team,
+        "team_id": team.id if team else None,
+        "medal": medal,
+        "rank": rank,
+        "detail": detail,
+        "recipient_name": recipient_name or (team.name if team else ""),
+        "athlete_id": athlete_id,
+        "coach_id": coach_id,
+    }
+
+
 def collect_medal_entries(event, sport_id=None, class_name="", gender=""):
-    from models import RankingCompetition, RankingResult, RoundRobinCompetition, ContestCompetition, ContestResult
+    from models import RankingCompetition, RankingResult, RoundRobinCompetition, ContestCompetition, ContestResult, KnockoutCompetition, KnockoutMatch
     entries = []
 
     ranking_comps = RankingCompetition.query.filter_by(event_id=event.id).all()
@@ -4327,45 +5600,44 @@ def collect_medal_entries(event, sport_id=None, class_name="", gender=""):
             medal = result.medal or medal_for_rank(result.rank)
             if medal not in ("gold", "silver", "bronze"):
                 continue
-            entries.append({
-                "source": "Ranking",
-                "competition": comp.name,
-                "sport": comp.sport_division.sport.name if comp.sport_division else "-",
-                "class_name": comp.sport_division.class_name if comp.sport_division else "-",
-                "gender": comp.sport_division.gender if comp.sport_division else "-",
-                "team": result.team,
-                "team_id": result.team_id,
-                "medal": medal,
-                "rank": result.rank,
-                "detail": result.competitor_name or (result.athlete.full_name if result.athlete else ""),
-            })
-
+            recipient_name = result.competitor_name or (result.athlete.full_name if result.athlete else "") or (result.team.name if result.team else "")
+            detail_parts = [x for x in [result.time_value, result.distance_value, result.score_value] if x]
+            entries.append(result_entry(
+                "Ranking",
+                comp,
+                result.team,
+                result.rank,
+                medal,
+                detail=" / ".join(detail_parts),
+                recipient_name=recipient_name,
+                athlete_id=result.athlete_id,
+            ))
 
     contest_comps = ContestCompetition.query.filter_by(event_id=event.id).all()
     for comp in contest_comps:
         if not division_matches_filter(comp.sport_division, sport_id, class_name, gender):
             continue
+        refresh_contest_results(comp)
         results = ContestResult.query.filter_by(competition_id=comp.id).order_by(ContestResult.rank.asc().nullslast(), ContestResult.total_score.desc()).all()
         for result in results:
             medal = result.medal or medal_for_rank(result.rank)
             if medal not in ("gold", "silver", "bronze"):
                 continue
-            entries.append({
-                "source": "Contest",
-                "competition": comp.name,
-                "sport": comp.sport_division.sport.name if comp.sport_division else comp.activity_type or "กิจกรรมประกวด",
-                "class_name": comp.sport_division.class_name if comp.sport_division else "-",
-                "gender": comp.sport_division.gender if comp.sport_division else "-",
-                "team": result.team,
-                "team_id": result.team_id,
-                "medal": medal,
-                "rank": result.rank,
-                "detail": f"{result.total_score:g} คะแนน",
-            })
+            entries.append(result_entry(
+                "Contest",
+                comp,
+                result.team,
+                result.rank,
+                medal,
+                detail=f"{result.total_score:g} คะแนน",
+                recipient_name=result.team.name if result.team else "",
+            ))
 
     rr_comps = RoundRobinCompetition.query.filter_by(event_id=event.id).all()
     for comp in rr_comps:
         if not division_matches_filter(comp.sport_division, sport_id, class_name, gender):
+            continue
+        if not competition_matches_completed(comp.matches):
             continue
         standings = calculate_rr_standings(comp)
         all_rows = []
@@ -4375,20 +5647,45 @@ def collect_medal_entries(event, sport_id=None, class_name="", gender=""):
             continue
         ordered = sorted(all_rows, key=lambda r: rr_sort_key(comp, r), reverse=True)
         for idx, row in enumerate(ordered[:3], start=1):
-            entries.append({
-                "source": "Round Robin",
-                "competition": comp.name,
-                "sport": comp.sport_division.sport.name if comp.sport_division else "-",
-                "class_name": comp.sport_division.class_name if comp.sport_division else "-",
-                "gender": comp.sport_division.gender if comp.sport_division else "-",
-                "team": row["team"],
-                "team_id": row["team"].id,
-                "medal": medal_for_position(idx),
-                "rank": idx,
-                "detail": f"{row['points']} คะแนน / ได้เสีย {row['goal_diff']}",
-            })
-    return entries
+            entries.append(result_entry(
+                "Round Robin",
+                comp,
+                row["team"],
+                idx,
+                medal_for_position(idx),
+                detail=f"{row['points']} คะแนน / ได้เสีย {row.get('goal_diff', 0)}",
+                recipient_name=row["team"].name,
+            ))
 
+    ko_comps = KnockoutCompetition.query.filter_by(event_id=event.id).all()
+    for comp in ko_comps:
+        if not division_matches_filter(comp.sport_division, sport_id, class_name, gender):
+            continue
+        matches = KnockoutMatch.query.filter_by(competition_id=comp.id).order_by(KnockoutMatch.round_no.asc(), KnockoutMatch.match_no.asc()).all()
+        if not matches:
+            continue
+        max_round = max((m.round_no or 0) for m in matches)
+        final_matches = [m for m in matches if (m.round_no or 0) == max_round]
+        final_match = final_matches[0] if final_matches else None
+        if not completed_knockout_match(final_match):
+            continue
+        winner = match_winner_team(final_match)
+        loser = match_loser_team(final_match)
+        if winner:
+            entries.append(result_entry("Knockout", comp, winner, 1, "gold", detail="ชนะเลิศ", recipient_name=winner.name))
+        if loser:
+            entries.append(result_entry("Knockout", comp, loser, 2, "silver", detail="รองชนะเลิศ", recipient_name=loser.name))
+        third_candidates = []
+        for m in matches:
+            rname = (m.round_name or "").replace(" ", "")
+            if ("อันดับ3" in rname or "ที่3" in rname or "ชิงที่3" in rname) and completed_knockout_match(m):
+                third = match_winner_team(m)
+                if third:
+                    third_candidates.append(third)
+        if third_candidates:
+            third = third_candidates[0]
+            entries.append(result_entry("Knockout", comp, third, 3, "bronze", detail="อันดับ 3", recipient_name=third.name))
+    return entries
 
 def build_medal_table(event, entries):
     rows = {}
@@ -4523,6 +5820,82 @@ def create_certificate_recipient(tpl, full_name, recipient_type="manual", team_i
     return cert
 
 
+def get_default_result_certificate_template(event, template_id=None):
+    from models import CertificateTemplate
+    tpl = CertificateTemplate.query.filter_by(id=template_id, event_id=event.id).first() if template_id else None
+    if tpl:
+        return tpl
+    tpl = (CertificateTemplate.query
+           .filter_by(event_id=event.id, cert_type="winner", is_active=True)
+           .order_by(CertificateTemplate.created_at.desc())
+           .first())
+    if tpl:
+        return tpl
+    tpl = (CertificateTemplate.query
+           .filter_by(event_id=event.id, is_active=True)
+           .order_by(CertificateTemplate.created_at.desc())
+           .first())
+    if tpl:
+        return tpl
+    tpl = CertificateTemplate(
+        event_id=event.id,
+        name="เกียรติบัตรผลการแข่งขันอัตโนมัติ",
+        cert_type="winner",
+        title="เกียรติบัตร",
+        subtitle="ขอมอบเกียรติบัตรฉบับนี้ไว้เพื่อแสดงว่า",
+        body="{name} ได้รับรางวัล {award} ในรายการ {sport} งาน {event_name}",
+        footer_text="ออกจากระบบ KRURUK SPORTS ตามผลการแข่งขันที่บันทึกในระบบ",
+        background_color="#ffffff",
+        accent_color="#2563eb",
+        is_active=True,
+    )
+    db.session.add(tpl)
+    db.session.flush()
+    return tpl
+
+
+def make_certificate_award_text(entry):
+    medal = medal_label(entry.get("medal"))
+    rank = entry.get("rank") or ""
+    if medal:
+        return f"รางวัลเหรียญ{medal} / อันดับ {rank}"
+    return f"อันดับ {rank}"
+
+
+def make_certificate_sport_text(entry):
+    parts = [entry.get("competition"), entry.get("sport"), entry.get("class_name"), entry.get("gender")]
+    return " / ".join([str(x) for x in parts if x and x != "-"])
+
+
+def sync_result_certificates_for_event(event, template_id=None):
+    from models import CertificateRecipient
+    tpl = get_default_result_certificate_template(event, template_id=template_id)
+    entries = collect_medal_entries(event)
+    # ผลการแข่งขันเป็นแหล่งจริง: ซิงก์ใหม่ทุกครั้ง ลดปัญหาแก้ผลแล้วชื่อเก่ายังค้าง
+    CertificateRecipient.query.filter_by(event_id=event.id, template_id=tpl.id, recipient_type="winner").delete()
+    created = 0
+    for entry in entries:
+        team = entry.get("team")
+        full_name = (entry.get("recipient_name") or entry.get("competitor_name") or (team.name if team else "") or "").strip()
+        if not full_name:
+            continue
+        cert = create_certificate_recipient(
+            tpl,
+            full_name=full_name,
+            recipient_type="winner",
+            team_id=entry.get("team_id"),
+            athlete_id=entry.get("athlete_id"),
+            coach_id=entry.get("coach_id"),
+            role_text="ผู้ได้รับรางวัล",
+            award_text=make_certificate_award_text(entry),
+            sport_text=make_certificate_sport_text(entry),
+        )
+        if cert:
+            created += 1
+    db.session.commit()
+    return tpl, created, len(entries)
+
+
 def generate_certificates_for_template(tpl, mode):
     from models import Athlete, Coach, CertificateRecipient, Team
     event = tpl.event
@@ -4539,14 +5912,7 @@ def generate_certificates_for_template(tpl, mode):
             if create_certificate_recipient(tpl, c.full_name, "coach", team_id=c.team_id, coach_id=c.id, role_text="ผู้ฝึกสอน", award_text="ผู้ฝึกสอน", sport_text=c.sport_responsibility or ""):
                 created += 1
     elif mode == "winner":
-        entries = collect_medal_entries(event)
-        for e in entries:
-            team = e.get("team")
-            name = e.get("detail") or (team.name if team else "")
-            award = f"{medal_label(e.get('medal'))} อันดับ {e.get('rank')}"
-            sport = f"{e.get('competition')} / {e.get('sport')} / {e.get('class_name')} / {e.get('gender')}"
-            if create_certificate_recipient(tpl, name, "winner", team_id=e.get("team_id"), role_text="ผู้ได้รับรางวัล", award_text=award, sport_text=sport):
-                created += 1
+        _tpl, created, _available = sync_result_certificates_for_event(event, template_id=tpl.id)
     elif mode in ("committee", "judge", "sponsor"):
         # ใช้การเพิ่มรายชื่อเองในหน้า Certificate สำหรับกลุ่มนี้ เพื่อไม่บังคับรูปแบบข้อมูล
         pass
@@ -4597,6 +5963,6 @@ app = create_app()
 if __name__ == "__main__":
     # Railway/production must bind to 0.0.0.0 and use the PORT env var.
     # Local run still works with: python app.py
-    port = int(os.environ.get("PORT", "5000"))
+    port = int(os.environ.get("PORT", "5050"))
     debug = os.environ.get("FLASK_DEBUG", "0") == "1"
     app.run(host="0.0.0.0", port=port, debug=debug)
