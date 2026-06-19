@@ -1,7 +1,15 @@
 {% extends 'base.html' %}
 {% block page_title %}แดชบอร์ด{% endblock %}
 {% block content %}
-
+<div class="hero-dashboard soft-card mb-4">
+  <div class="hero-badge"><i class="bi bi-calendar-event"></i> โหมดทดลองใช้ · จัดงานได้เร็วขึ้น</div>
+  <h2 class="mb-1">จัดการแข่งขันจากงานเดียว</h2>
+  <p class="mb-3">สร้างงาน → เพิ่มทีม/สี → สร้างการแข่งขัน → บันทึกผล ไม่ต้องแยกหน้าองค์กรให้ลูกค้าสับสน</p>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-light btn-lg fw-bold" href="{{ url_for('event_new') }}"><i class="bi bi-plus-circle"></i> สร้างงานแข่งขัน</a>
+    {% if latest_events %}<a class="btn btn-outline-light btn-lg" href="{{ url_for('event_detail', event_id=latest_events[0].id) }}">เปิดงานล่าสุด</a>{% endif %}
+  </div>
+</div>
 
 <div class="row g-3 mb-4">
   <div class="col-md-3"><div class="stat-card gradient-1"><span>งานแข่งขัน</span><b>{{ event_count }}</b><i class="bi bi-trophy"></i></div></div>

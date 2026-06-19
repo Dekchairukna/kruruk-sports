@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+{% block title %}Super Admin · KRURUK SPORTS{% endblock %}
+{% block page_title %}ศูนย์บริหารระบบ Super Admin{% endblock %}
+{% block content %}
+<div class="admin-hero soft-card mb-4">
+  <div>
+    <span class="promo-badge"><i class="bi bi-shield-lock"></i> Super Admin</span>
+    <h2 class="mt-2 mb-1">ดูแลทั้งระบบ แต่ผู้สมัครเห็นเฉพาะงานของตัวเอง</h2>
+    <p class="text-muted mb-0">หน้านี้ใช้ตรวจภาพรวม จัดการผู้ใช้ องค์กร แพ็กเกจ และสิทธิ์การเข้าถึง</p>
+  </div>
+  <a class="btn btn-primary" href="{{ url_for('super_admin_users') }}"><i class="bi bi-people"></i> จัดการผู้ใช้</a>
+</div>
+<div class="row g-3 mb-4">
+  <div class="col-md-3"><div class="admin-stat"><b>{{ org_count }}</b><span>องค์กร</span></div></div>
+  <div class="col-md-3"><div class="admin-stat"><b>{{ user_count }}</b><span>ผู้ใช้</span></div></div>
+  <div class="col-md-3"><div class="admin-stat"><b>{{ event_count }}</b><span>งานแข่งขัน</span></div></div>
+  <div class="col-md-3"><div class="admin-stat"><b>{{ active_sub_count }}</b><span>Subscription active</span></div></div>
+</div>
+<div class="row g-4">
+  <div class="col-lg-7">
+    <div class="card soft-card border-0"><div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-3"><h5 class="mb-0">งานแข่งขันล่าสุด</h5><a href="{{ url_for('events') }}">ดูทั้งหมด</a></div>
+      <div class="table-responsive"><table class="table align-middle"><thead><tr><th>งาน</th><th>องค์กร</th><th>สถานะ</th><th></th></tr></thead><tbody>{% for e in recent_events %}<tr><td><b>{{ e.name }}</b><div class="text-muted small">{{ e.start_date or '-' }} - {{ e.end_date or '-' }}</div></td><td>{{ e.organization.name }}</td><td><span class="badge status-{{ e.status }}">{{ e.status }}</span></td><td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('event_detail', event_id=e.id) }}">เปิด</a></td></tr>{% else %}<tr><td colspan="4" class="text-muted">ยังไม่มีงาน</td></tr>{% endfor %}</tbody></table></div>
+    </div></div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card soft-card border-0 mb-4"><div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-3"><h5 class="mb-0">ผู้ใช้ล่าสุด</h5><a href="{{ url_for('super_admin_users') }}">จัดการ</a></div>
+      {% for u in recent_users %}<div class="admin-list-row"><div><b>{{ u.name }}</b><div class="text-muted small">{{ u.email }}</div></div><span class="badge bg-light text-dark border">{{ u.role }}</span></div>{% else %}<p class="text-muted">ยังไม่มีผู้ใช้</p>{% endfor %}
+    </div></div>
+    <div class="card soft-card border-0"><div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-3"><h5 class="mb-0">แพ็กเกจ</h5><a href="{{ url_for('admin_subscription_plans') }}">แก้แพ็กเกจ</a></div>
+      {% for p in plans %}<div class="admin-list-row"><div><b>{{ p.name }}</b><div class="text-muted small">{{ p.description or '-' }}</div></div><span class="badge bg-primary-subtle text-primary">{{ p.price|int }} {{ p.currency }}</span></div>{% endfor %}
+    </div></div>
+  </div>
+</div>
+{% endblock %}

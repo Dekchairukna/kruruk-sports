@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block title %}จัดการผู้ใช้ · KRURUK SPORTS{% endblock %}
+{% block page_title %}จัดการผู้ใช้และสิทธิ์องค์กร{% endblock %}
+{% block content %}
+<div class="admin-hero soft-card mb-4">
+  <div><span class="promo-badge"><i class="bi bi-people"></i> User Management</span><h2 class="mt-2 mb-1">กำหนดสิทธิ์แบบหลายระดับ</h2><p class="text-muted mb-0">Super Admin จัดการได้ทั้งหมด ส่วนผู้สมัครทั่วไปถูกผูกกับองค์กรของตนเองเท่านั้น</p></div>
+  <a class="btn btn-outline-primary" href="{{ url_for('super_admin_dashboard') }}"><i class="bi bi-speedometer2"></i> กลับศูนย์ระบบ</a>
+</div>
+<form class="row g-2 mb-3" method="get"><div class="col-md-10"><input class="form-control" name="q" value="{{ q }}" placeholder="ค้นหาชื่อ อีเมล หรือ username"></div><div class="col-md-2 d-grid"><button class="btn btn-primary">ค้นหา</button></div></form>
+<div class="card soft-card border-0"><div class="card-body">
+  <div class="table-responsive"><table class="table align-middle"><thead><tr><th>ผู้ใช้</th><th>บทบาทระบบ</th><th>องค์กรที่เข้าถึง</th><th>เพิ่มองค์กร</th></tr></thead><tbody>
+  {% for u in users %}
+  <tr>
+    <td><b>{{ u.name }}</b><div class="text-muted small">{{ u.email }}{% if u.username %} · {{ u.username }}{% endif %}</div></td>
+    <td>
+      <form method="post" action="{{ url_for('super_admin_user_role', user_id=u.id) }}" class="d-flex gap-2"><input type="hidden" name="q" value="{{ q }}"><select class="form-select form-select-sm" name="role"><option value="superadmin" {% if u.role=='superadmin' %}selected{% endif %}>Super Admin</option><option value="organization_admin" {% if u.role=='organization_admin' %}selected{% endif %}>Admin องค์กร</option><option value="event_admin" {% if u.role=='event_admin' %}selected{% endif %}>Admin งาน</option><option value="viewer" {% if u.role=='viewer' %}selected{% endif %}>Viewer</option></select><button class="btn btn-sm btn-outline-primary">บันทึก</button></form>
+    </td>
+    <td>
+      {% for m in u.memberships %}<div class="membership-pill"><span>{{ m.organization.name }} · {{ m.role }}</span><form method="post" action="{{ url_for('super_admin_membership_delete', membership_id=m.id) }}"><input type="hidden" name="q" value="{{ q }}"><button class="btn btn-sm btn-link text-danger p-0">ลบ</button></form></div>{% else %}<span class="text-muted small">ยังไม่ผูกองค์กร</span>{% endfor %}
+    </td>
+    <td>
+      <form method="post" action="{{ url_for('super_admin_user_membership_add', user_id=u.id) }}" class="admin-membership-form"><input type="hidden" name="q" value="{{ q }}"><select class="form-select form-select-sm" name="organization_id"><option value="">เลือกองค์กร</option>{% for org in organizations %}<option value="{{ org.id }}">{{ org.name }}</option>{% endfor %}</select><select class="form-select form-select-sm" name="member_role"><option value="organization_admin">Admin องค์กร</option><option value="event_admin">Admin งาน</option><option value="viewer">Viewer</option></select><button class="btn btn-sm btn-success">เพิ่ม</button></form>
+    </td>
+  </tr>
+  {% else %}<tr><td colspan="4" class="text-muted text-center py-4">ไม่พบผู้ใช้</td></tr>{% endfor %}
+  </tbody></table></div>
+</div></div>
+{% endblock %}

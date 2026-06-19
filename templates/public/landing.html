@@ -1,0 +1,80 @@
+{% extends 'base.html' %}
+{% block title %}KRURUK SPORTS · ระบบจัดการแข่งขันกีฬา{% endblock %}
+{% block auth_content %}
+<div class="promo-page">
+  <nav class="promo-nav">
+    <div class="brand"><span class="brand-mark">KS</span><div><b>KRURUK</b><small>SPORTS</small></div></div>
+    <div class="promo-nav-actions">
+      <a href="{{ url_for('public_guide') }}">วิธีใช้งาน</a>
+      <a href="#roles">สิทธิ์ผู้ใช้</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('login') }}">เข้าสู่ระบบ</a>
+      <a class="btn btn-primary" href="{{ url_for('register') }}">เริ่มทดลองใช้</a>
+    </div>
+  </nav>
+
+  <section class="promo-hero">
+    <div>
+      <span class="promo-badge"><i class="bi bi-stars"></i> ช่วงทดลองใช้</span>
+      <h1>KRURUK SPORTS</h1>
+      <p class="promo-lead">ระบบจัดการแข่งขันกีฬาสี กีฬาโรงเรียน กีฬาองค์กร และการแข่งขันชุมชน แบบครบวงจร</p>
+      <div class="promo-slogan"><i class="bi bi-trophy-fill"></i> จัดง่าย ใช้งานจริง จบงานได้ในระบบเดียว</div>
+      <div class="promo-actions">
+        <a class="btn btn-primary btn-lg" href="{{ url_for('register') }}"><i class="bi bi-rocket-takeoff"></i> สมัครทดลองใช้</a>
+        <a class="btn btn-light btn-lg" href="{{ url_for('public_guide') }}"><i class="bi bi-book"></i> ดูวิธีใช้งาน</a>
+      </div>
+    </div>
+    <div class="promo-mockup">
+      <div class="mock-card mock-main">
+        <div class="d-flex justify-content-between align-items-center mb-3"><b>Dashboard</b><span class="badge bg-success-subtle text-success">online</span></div>
+        <div class="mock-stat-grid">
+          <div><b>16</b><span>กีฬา</span></div><div><b>92</b><span>ทีม/สี</span></div><div><b>238</b><span>รายการ</span></div>
+        </div>
+        <div class="mock-list"><span><i class="bi bi-calendar-event"></i> โปรแกรมแข่งขัน</span><span><i class="bi bi-pencil-square"></i> บันทึกผล</span><span><i class="bi bi-award"></i> เกียรติบัตร</span><span><i class="bi bi-printer"></i> รายงาน</span></div>
+      </div>
+      <div class="mock-card mock-score"><b>ตารางคะแนน</b><p>ทีม · แข่ง · ชนะ · แพ้ · แต้ม</p><div class="score-line"></div><div class="score-line short"></div><div class="score-line mid"></div></div>
+      <div class="mock-card mock-bracket"><b>สายการแข่งขัน</b><div class="bracket-lines"></div></div>
+    </div>
+  </section>
+
+  <section class="promo-section">
+    <div class="promo-section-head"><span><i class="bi bi-star-fill"></i></span><h2>จุดเด่นของระบบ</h2></div>
+    <div class="feature-grid">
+      <div class="feature-card"><i class="bi bi-people-fill"></i><b>สร้างอีเว้นท์และทีม/สีได้ง่าย</b><p>เหมาะกับกีฬาสี โรงเรียน อบต. เทศบาล และองค์กร</p></div>
+      <div class="feature-card"><i class="bi bi-diagram-3-fill"></i><b>เลือกกีฬา จัดสาย และสร้างโปรแกรมอัตโนมัติ</b><p>แบ่งกลุ่ม พบกันหมด หรือ Knockout ได้ตามรูปแบบงาน</p></div>
+      <div class="feature-card"><i class="bi bi-clipboard2-check-fill"></i><b>บันทึกผล ดูตารางคะแนน และจัดรอบต่อทันที</b><p>แอดมินใช้หน้างานจริงได้ ไม่ต้องคำนวณมือซ้ำ</p></div>
+      <div class="feature-card"><i class="bi bi-award-fill"></i><b>ออกเกียรติบัตรจากผลการแข่งขันจริง</b><p>ครูประจำสีเข้ามาพิมพ์เฉพาะทีมของตนเองได้</p></div>
+      <div class="feature-card"><i class="bi bi-file-earmark-richtext-fill"></i><b>พิมพ์โปรแกรม รายงาน และสูจิบัตรได้</b><p>ดึงข้อมูลผู้รับผิดชอบ ตารางแข่ง และผลสรุปจากระบบ</p></div>
+      <div class="feature-card"><i class="bi bi-display-fill"></i><b>รองรับ Live Board และรายงานผล</b><p>แสดงผลบนจอใหญ่สำหรับสนามแข่งขันหรือพิธีมอบรางวัล</p></div>
+    </div>
+  </section>
+
+  <section class="promo-section step-section">
+    <div class="promo-section-head"><span><i class="bi bi-rocket-takeoff-fill"></i></span><h2>วิธีใช้งานแบบเข้าใจง่าย</h2></div>
+    <div class="step-flow">
+      <div><i class="bi bi-calendar-plus"></i><b>1 สร้างอีเว้นท์</b><small>ระบุชื่องาน วันที่ สถานที่ และบริบทงาน</small></div>
+      <div><i class="bi bi-people"></i><b>2 เพิ่มทีม / สี</b><small>สร้างทีม สี โรงเรียน หรือหน่วยงานที่เข้าร่วม</small></div>
+      <div><i class="bi bi-trophy"></i><b>3 เลือกกีฬาและระบบแข่ง</b><small>เลือกจากคลังกีฬา แล้วกำหนดกลุ่ม สาย เซต หรือแต้ม</small></div>
+      <div><i class="bi bi-clipboard-data"></i><b>4 บันทึกผลและจัดรอบต่อ</b><small>ดูตารางคะแนนและเส้นทางรอบต่อไปได้ทันที</small></div>
+      <div><i class="bi bi-printer"></i><b>5 สรุปผลและพิมพ์รายงาน</b><small>ออกเกียรติบัตร โปรแกรมแข่งขัน และเอกสารสรุป</small></div>
+    </div>
+  </section>
+
+  <section id="roles" class="promo-section">
+    <div class="promo-section-head"><span><i class="bi bi-shield-lock-fill"></i></span><h2>สิทธิ์การใช้งาน</h2><em>รองรับการบริหารหลายระดับ</em></div>
+    <div class="role-grid">
+      <div class="role-card super"><i class="bi bi-person-badge-fill"></i><h3>Super Admin</h3><p>ดูแลระบบรวม จัดการทุกองค์กร ผู้ใช้ แพ็กเกจ และตั้งค่าระบบ</p></div>
+      <div class="role-card admin"><i class="bi bi-person-workspace"></i><h3>Admin / ผู้จัดการแข่งขัน</h3><p>จัดการเฉพาะงานและองค์กรของตนเอง เห็นเฉพาะข้อมูลที่มีสิทธิ์</p></div>
+      <div class="role-card user"><i class="bi bi-person-check-fill"></i><h3>ผู้ใช้งาน / ครูประจำสี</h3><p>เข้าถึงเฉพาะส่วนงานของตน เช่น ดูผล พิมพ์เอกสาร และเกียรติบัตร</p></div>
+    </div>
+  </section>
+
+  <section class="promo-contact">
+    <div><h2>ช่องทางติดต่อผู้พัฒนา</h2><p>สนใจใช้งานหรือพัฒนาต่อ ติดต่อได้เลย</p></div>
+    <div class="contact-grid">
+      <span><i class="bi bi-person-circle"></i> ผู้พัฒนา: ครูรัก</span>
+      <span><i class="bi bi-envelope-fill"></i> อีเมล: niyomp@kkumail.com</span>
+      <span><i class="bi bi-chat-dots-fill"></i> ติดต่อ: @niyomp</span>
+    </div>
+  </section>
+</div>
+{% endblock %}

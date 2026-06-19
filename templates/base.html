@@ -20,6 +20,7 @@
     <nav class="nav flex-column sidebar-nav-modern">
       <div class="nav-group-label">ภาพรวม</div>
       <a class="nav-link" href="{{ url_for('dashboard') }}"><i class="bi bi-speedometer2"></i> แดชบอร์ด</a>
+      <a class="nav-link" href="{{ url_for('about_system') }}"><i class="bi bi-megaphone"></i> แนะนำระบบ/คู่มือ</a>
       <a class="nav-link" href="{{ url_for('event_new') }}"><i class="bi bi-plus-square"></i> สร้างงานแข่งขัน</a>
 
       {% if nav_eid %}
@@ -35,6 +36,8 @@
       <div class="nav-group-label">ระบบ</div>
       <a class="nav-link" href="{{ url_for('billing_home') }}"><i class="bi bi-credit-card"></i> Billing</a>
       {% if current_user.is_superadmin %}
+      <a class="nav-link" href="{{ url_for('super_admin_dashboard') }}"><i class="bi bi-shield-lock"></i> Super Admin</a>
+      <a class="nav-link" href="{{ url_for('super_admin_users') }}"><i class="bi bi-people-fill"></i> Users</a>
       <a class="nav-link" href="{{ url_for('organizations') }}"><i class="bi bi-building"></i> Organizations</a>
       <a class="nav-link" href="{{ url_for('admin_subscription_plans') }}"><i class="bi bi-stars"></i> Packages</a>
       {% endif %}

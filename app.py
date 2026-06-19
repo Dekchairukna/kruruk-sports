@@ -876,7 +876,20 @@ def register_routes(app):
     def index():
         if current_user.is_authenticated:
             return redirect(url_for("dashboard"))
-        return redirect(url_for("login"))
+        return render_template("public/landing.html")
+
+    @app.route("/features")
+    def public_features():
+        return render_template("public/landing.html")
+
+    @app.route("/guide")
+    def public_guide():
+        return render_template("public/guide.html")
+
+    @app.route("/about-system")
+    @login_required
+    def about_system():
+        return render_template("public/guide.html", in_app=True)
 
     @app.route("/register", methods=["GET", "POST"])
     def register():
@@ -3889,6 +3902,92 @@ def register_routes(app):
         flash("ลบผู้ฝึกสอนแล้ว", "info")
         return redirect(url_for("portal_athletes", team_id=team.id))
 
+
+    @app.route("/super-admin")
+    @login_required
+    @superadmin_required
+    def super_admin_dashboard():
+        org_count = Organization.query.count()
+        user_count = User.query.count()
+        event_count = Event.query.count()
+        active_sub_count = OrganizationSubscription.query.filter_by(status="active").count()
+        recent_orgs = Organization.query.order_by(Organization.created_at.desc()).limit(8).all()
+        recent_users = User.query.order_by(User.created_at.desc()).limit(8).all()
+        recent_events = Event.query.order_by(Event.created_at.desc()).limit(10).all()
+        plans = SubscriptionPlan.query.order_by(SubscriptionPlan.sort_order, SubscriptionPlan.id).all()
+        return render_template(
+            "admin/dashboard.html",
+            org_count=org_count,
+            user_count=user_count,
+            event_count=event_count,
+            active_sub_count=active_sub_count,
+            recent_orgs=recent_orgs,
+            recent_users=recent_users,
+            recent_events=recent_events,
+            plans=plans,
+        )
+
+    @app.route("/super-admin/users")
+    @login_required
+    @superadmin_required
+    def super_admin_users():
+        q = (request.args.get("q") or "").strip()
+        query = User.query
+        if q:
+            like = f"%{q}%"
+            query = query.filter((User.name.ilike(like)) | (User.email.ilike(like)) | (User.username.ilike(like)))
+        users = query.order_by(User.created_at.desc()).limit(120).all()
+        organizations = Organization.query.order_by(Organization.name).all()
+        return render_template("admin/users.html", users=users, organizations=organizations, q=q)
+
+    @app.route("/super-admin/users/<int:user_id>/role", methods=["POST"])
+    @login_required
+    @superadmin_required
+    def super_admin_user_role(user_id):
+        user = User.query.get_or_404(user_id)
+        role = request.form.get("role", "organization_admin")
+        allowed = {"superadmin", "organization_admin", "event_admin", "viewer"}
+        if role not in allowed:
+            flash("บทบาทผู้ใช้ไม่ถูกต้อง", "danger")
+            return redirect(url_for("super_admin_users"))
+        if user.id == current_user.id and role != "superadmin":
+            flash("ไม่สามารถลดสิทธิ์ Super Admin ของบัญชีที่กำลังใช้งานอยู่", "warning")
+            return redirect(url_for("super_admin_users"))
+        user.role = role
+        db.session.commit()
+        flash("อัปเดตบทบาทผู้ใช้แล้ว", "success")
+        return redirect(url_for("super_admin_users", q=request.form.get("q", "")))
+
+    @app.route("/super-admin/users/<int:user_id>/memberships/add", methods=["POST"])
+    @login_required
+    @superadmin_required
+    def super_admin_user_membership_add(user_id):
+        user = User.query.get_or_404(user_id)
+        org_id = safe_int_or_none(request.form.get("organization_id"))
+        role = request.form.get("member_role", "organization_admin")
+        if not org_id:
+            flash("กรุณาเลือกองค์กร", "danger")
+            return redirect(url_for("super_admin_users"))
+        org = Organization.query.get_or_404(org_id)
+        membership = OrganizationMember.query.filter_by(user_id=user.id, organization_id=org.id).first()
+        if not membership:
+            membership = OrganizationMember(user_id=user.id, organization_id=org.id, role=role)
+            db.session.add(membership)
+        else:
+            membership.role = role
+        db.session.commit()
+        flash("ผูกผู้ใช้กับองค์กรแล้ว", "success")
+        return redirect(url_for("super_admin_users", q=request.form.get("q", "")))
+
+    @app.route("/super-admin/memberships/<int:membership_id>/delete", methods=["POST"])
+    @login_required
+    @superadmin_required
+    def super_admin_membership_delete(membership_id):
+        membership = OrganizationMember.query.get_or_404(membership_id)
+        db.session.delete(membership)
+        db.session.commit()
+        flash("ลบสิทธิ์องค์กรของผู้ใช้แล้ว", "info")
+        return redirect(url_for("super_admin_users", q=request.form.get("q", "")))
 
     @app.route("/admin/subscription-plans", methods=["GET", "POST"])
     @login_required

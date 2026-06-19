@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block title %}คู่มือใช้งาน · KRURUK SPORTS{% endblock %}
+{% block page_title %}คู่มือและภาพรวมระบบ{% endblock %}
+{% block auth_content %}
+<div class="promo-page guide-only">
+  <nav class="promo-nav"><div class="brand"><span class="brand-mark">KS</span><div><b>KRURUK</b><small>SPORTS</small></div></div><div class="promo-nav-actions"><a href="{{ url_for('index') }}">หน้าแนะนำระบบ</a><a class="btn btn-primary" href="{{ url_for('login') }}">เข้าสู่ระบบ</a></div></nav>
+  {% include 'public/_guide_inner.html' %}
+</div>
+{% endblock %}
+{% block content %}
+  {% include 'public/_guide_inner.html' %}
+{% endblock %}
