@@ -1,111 +1,134 @@
 {% extends 'base.html' %}
-{% block page_title %}บันทึกคะแนนรายเซต{% endblock %}
+{% block page_title %}บันทึกคะแนน Knockout{% endblock %}
 {% block content %}
 <style>
-.score-team-card{cursor:pointer;transition:.15s;border:2px solid #e5e7eb;border-radius:18px;background:#fff;min-height:132px}.score-team-card:hover{transform:translateY(-1px);border-color:#0d6efd;box-shadow:0 10px 24px rgba(13,110,253,.12)}.score-team-card.active-side{border-color:#0d6efd;background:#f0f7ff}.big-score{font-size:54px;font-weight:900;line-height:1}.set-pill{border-radius:999px}.score-log{max-height:280px;overflow:auto}.tap-hint{font-size:.85rem;color:#64748b}.team-name-button{font-size:1.25rem;font-weight:800;color:#0f172a;background:transparent;border:0;padding:0;text-align:left}.team-name-button:hover{text-decoration:underline}.stand-now{background:#f8fafc;border-radius:14px;padding:12px}
+.score-sheet-hero{background:linear-gradient(135deg,#e0f2fe,#f5f3ff);border:1px solid rgba(14,165,233,.25);border-radius:24px;padding:22px;margin-bottom:18px}.score-team-card{cursor:pointer;transition:.15s;border:2px solid #e5e7eb;border-radius:22px;background:#fff;min-height:156px}.score-team-card:hover{transform:translateY(-1px);border-color:#38bdf8;box-shadow:0 14px 30px rgba(14,165,233,.14)}.score-team-card.active-side{border-color:#6366f1;background:#eef2ff}.big-score{font-size:66px;font-weight:950;line-height:1;color:#0f172a}.set-pill{border-radius:999px}.score-log{max-height:280px;overflow:auto}.tap-hint{font-size:.86rem;color:#64748b}.team-name-button{font-size:1.2rem;font-weight:900;color:#0f172a;background:transparent;border:0;padding:0;text-align:left}.stand-now{background:#f8fafc;border-radius:18px;padding:14px;border:1px solid #e5e7eb}.rule-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid #bae6fd;background:#f0f9ff;color:#0369a1;border-radius:999px;padding:7px 12px;font-weight:800}.set-status{min-width:150px}.score-input{font-size:1.15rem;font-weight:800;text-align:center}.score-warning{display:none}.score-warning.show{display:block}.winner-box{font-weight:900}.winner-box.done{color:#15803d}.winner-box.warn{color:#b45309}.winner-box.bad{color:#dc2626}
 </style>
-<div class="card soft-card">
-  <div class="card-body">
-    <div class="d-flex justify-content-between align-items-start mb-3">
-      <div>
-        <h4>บันทึกคะแนนรายเซต</h4>
-        <div class="text-muted small">{{ comp.name }} · {{ match.round_name }} · คู่ {{ match.match_no }}</div>
-      </div>
-      <a class="btn btn-light" href="{{ url_for('knockout_detail', comp_id=comp.id) }}#match-{{ match.id }}">กลับ</a>
+<div class="score-sheet-hero">
+  <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+    <div>
+      <span class="rule-chip"><i class="bi bi-clipboard2-check"></i> {{ cfg.rule_label }}</span>
+      <h3 class="mt-3 mb-1">ใบบันทึกคะแนน {{ cfg.sport_name or 'กีฬาแบบรายเซต' }}</h3>
+      <div class="text-muted">{{ comp.name }} · คู่ {{ match.match_no }}</div>
+      <div class="small mt-2">{{ cfg.rule_note }}</div>
     </div>
+    <a class="btn btn-light" href="{{ url_for('knockout_detail', comp_id=comp.id) }}#match-{{ match.id }}">กลับ</a>
+  </div>
+</div>
 
-    <div class="alert alert-info mb-3">กดเลือกเซตก่อน แล้วกดชื่อโรงเรียน/การ์ดทีมเพื่อเพิ่มแต้มทีละ 1 แต้ม ระบบจะเก็บประวัติว่าเซตไหน ทีมไหนได้แต้ม และคะแนนยืนอยู่เท่าไหร่ · เซตสูงสุด {{ cfg.max_sets }} · ชนะ {{ cfg.sets_to_win }} เซต · แต้มเป้าหมาย {{ cfg.points_per_set }}</div>
+<div class="alert alert-warning score-warning" id="scoreWarning"></div>
 
+<div class="score-sheet-paper">
+  <div class="score-sheet-paper-head">
+    <div class="score-sheet-team">
+      <div class="small text-muted">ทีม A</div>
+      <div class="team-name-button">{{ match.team_a.name if match.team_a else 'BYE' }}</div>
+    </div>
+    <div class="score-sheet-vs">VS</div>
+    <div class="score-sheet-team">
+      <div class="small text-muted">ทีม B</div>
+      <div class="team-name-button">{{ match.team_b.name if match.team_b else 'BYE' }}</div>
+    </div>
+  </div>
+  <div class="card-body">
     <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
       <span class="fw-bold me-1">เลือกเซต:</span>
       {% for i in range(1, cfg.max_sets + 1) %}
       <button type="button" class="btn btn-outline-primary set-pill js-set-btn {{ 'active' if i==1 else '' }}" data-set="{{ i }}">เซต {{ i }}</button>
       {% endfor %}
       <span class="badge bg-light text-dark ms-md-2">กำลังบันทึก: <b id="activeSetLabel">เซต 1</b></span>
+      <span class="badge bg-info-subtle text-info-emphasis">ชนะ {{ cfg.sets_to_win }} เซต</span>
+      <span class="blank-zero-note"><i class="bi bi-info-circle"></i> ช่องว่างถือเป็น 0 เมื่ออีกฝั่งมีคะแนน</span>
     </div>
 
     <form method="post" id="setScoreForm">
       <input type="hidden" name="score_history" id="scoreHistoryInput" value='{{ score_history|tojson }}'>
       <div class="row g-3 mb-3 align-items-stretch">
         <div class="col-md-5">
-          <button type="button" class="w-100 text-start score-team-card p-3 js-score-team" data-side="a" data-team="{{ match.team_a.name }}">
-            <div class="team-name-button">{{ match.team_a.name }}</div>
-            <div class="tap-hint">แตะชื่อ/การ์ดนี้เพื่อเพิ่มแต้ม</div>
+          <button type="button" class="w-100 text-start score-team-card p-3 js-score-team" data-side="a" data-team="{{ match.team_a.name if match.team_a else 'BYE' }}">
+            <div class="team-name-button">{{ match.team_a.name if match.team_a else 'BYE' }}</div>
+            <div class="tap-hint">แตะการ์ดเพื่อเพิ่มแต้มทีละ 1</div>
             <div class="big-score mt-2" id="liveScoreA">0</div>
           </button>
         </div>
         <div class="col-md-2 text-center d-flex align-items-center justify-content-center"><span class="badge bg-primary fs-6">VS</span></div>
         <div class="col-md-5">
-          <button type="button" class="w-100 text-start score-team-card p-3 js-score-team" data-side="b" data-team="{{ match.team_b.name }}">
-            <div class="team-name-button">{{ match.team_b.name }}</div>
-            <div class="tap-hint">แตะชื่อ/การ์ดนี้เพื่อเพิ่มแต้ม</div>
+          <button type="button" class="w-100 text-start score-team-card p-3 js-score-team" data-side="b" data-team="{{ match.team_b.name if match.team_b else 'BYE' }}">
+            <div class="team-name-button">{{ match.team_b.name if match.team_b else 'BYE' }}</div>
+            <div class="tap-hint">แตะการ์ดเพื่อเพิ่มแต้มทีละ 1</div>
             <div class="big-score mt-2" id="liveScoreB">0</div>
           </button>
         </div>
       </div>
 
       <div class="d-flex flex-wrap gap-2 mb-3">
-        <button type="button" class="btn btn-outline-secondary" id="undoPointBtn">ย้อนแต้มล่าสุด</button>
-        <button type="button" class="btn btn-outline-danger" id="resetActiveSetBtn">ล้างแต้มเซตที่เลือก</button>
+        <button type="button" class="btn btn-outline-secondary" id="undoPointBtn"><i class="bi bi-arrow-counterclockwise"></i> ย้อนแต้มล่าสุด</button>
+        <button type="button" class="btn btn-outline-danger" id="resetActiveSetBtn"><i class="bi bi-eraser"></i> ล้างแต้มเซตที่เลือก</button>
       </div>
 
       <div class="table-responsive">
-        <table class="table align-middle">
-          <thead><tr><th>เซต</th><th>{{ match.team_a.name }}</th><th>{{ match.team_b.name }}</th><th>ผู้ชนะเซต</th></tr></thead>
+        <table class="table align-middle score-sheet-table">
+          <thead><tr><th>เซต</th><th>{{ match.team_a.name if match.team_a else 'BYE' }}</th><th>{{ match.team_b.name if match.team_b else 'BYE' }}</th><th class="set-status">สถานะเซต</th></tr></thead>
           <tbody>
             {% for i in range(1, cfg.max_sets + 1) %}
             {% set cur = current_sets[i-1] if current_sets|length >= i else {} %}
             <tr data-row-set="{{ i }}">
-              <td><b>เซต {{ i }}</b></td>
-              <td><input class="form-control js-set-input" type="number" min="0" name="set_{{ i }}_a" data-set="{{ i }}" data-side="a" value="{{ cur.a if cur.a is defined else '' }}" placeholder="{{ cfg.points_per_set }}"></td>
-              <td><input class="form-control js-set-input" type="number" min="0" name="set_{{ i }}_b" data-set="{{ i }}" data-side="b" value="{{ cur.b if cur.b is defined else '' }}" placeholder="{{ cfg.points_per_set }}"></td>
-              <td class="small fw-bold" id="setWinner{{ i }}">-</td>
+              <td><b>เซต {{ i }}</b><div class="small text-muted" id="targetLabel{{ i }}"></div></td>
+              <td><input class="form-control score-input js-set-input" type="number" min="0" name="set_{{ i }}_a" data-set="{{ i }}" data-side="a" value="{{ cur.a if cur.a is defined else '' }}" autocomplete="off"></td>
+              <td><input class="form-control score-input js-set-input" type="number" min="0" name="set_{{ i }}_b" data-set="{{ i }}" data-side="b" value="{{ cur.b if cur.b is defined else '' }}" autocomplete="off"></td>
+              <td class="winner-box" id="setWinner{{ i }}">-</td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
 
-      <div class="row g-3 mb-3">
-        <div class="col-lg-7">
-          <div class="stand-now">
-            <h6 class="mb-2">ประวัติแต้มของคู่นี้</h6>
-            <div class="score-log table-responsive">
-              <table class="table table-sm mb-0">
-                <thead><tr><th>#</th><th>เซต</th><th>ทีมที่ได้แต้ม</th><th>คะแนนยืน</th><th>เวลา</th></tr></thead>
-                <tbody id="historyBody"><tr><td colspan="5" class="text-muted">ยังไม่มีประวัติแต้ม</td></tr></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-        <div class="col-lg-5">
-          <div class="stand-now h-100">
-            <h6 class="mb-2">สถานะคู่นี้</h6>
-            <div class="mb-2">รอบ: <b>{{ match.round_name }}</b></div>
-            <div class="mb-2">คู่ที่: <b>{{ match.match_no }}</b></div>
-            <div>ผู้ชนะที่บันทึกไว้: {% if match.winner_team %}<span class="badge bg-success">{{ match.winner_team.name }}</span>{% else %}<span class="text-muted">ยังไม่สรุป</span>{% endif %}</div>
-          </div>
+      <div class="stand-now mb-3">
+        <h6 class="mb-2">ประวัติแต้มของคู่นี้</h6>
+        <div class="score-log table-responsive">
+          <table class="table table-sm mb-0">
+            <thead><tr><th>#</th><th>เซต</th><th>ทีมที่ได้แต้ม</th><th>คะแนนยืน</th><th>เวลา</th></tr></thead>
+            <tbody id="historyBody"><tr><td colspan="5" class="text-muted">ยังไม่มีประวัติแต้ม</td></tr></tbody>
+          </table>
         </div>
       </div>
 
       <label class="form-label">หมายเหตุ</label>
       <textarea class="form-control mb-3" name="note" rows="2">{{ match.note or '' }}</textarea>
-      <button class="btn btn-primary btn-lg">บันทึกคะแนนรายเซต</button>
+      <button class="btn btn-primary btn-lg score-sheet-submit w-100"><i class="bi bi-save"></i> บันทึกคะแนนรายเซต</button>
     </form>
   </div>
 </div>
 <script>
 (function(){
-  const maxSets = {{ cfg.max_sets }};
-  const pointTarget = {{ cfg.points_per_set }};
-  const teamA = {{ match.team_a.name|tojson }};
-  const teamB = {{ match.team_b.name|tojson }};
+  const cfg = {{ cfg|tojson }};
+  const maxSets = parseInt(cfg.max_sets || 3, 10);
+  const teamA = {{ (match.team_a.name if match.team_a else 'BYE')|tojson }};
+  const teamB = {{ (match.team_b.name if match.team_b else 'BYE')|tojson }};
   let activeSet = 1;
   let history = {{ score_history|tojson }} || [];
   const input = (set, side) => document.querySelector(`input[data-set="${set}"][data-side="${side}"]`);
   const val = (set, side) => parseInt(input(set, side)?.value || '0', 10) || 0;
   const setVal = (set, side, value) => { const el=input(set, side); if(el){ el.value=Math.max(0, value); } };
+  const cap = () => parseInt(cfg.max_point_cap || 0, 10) || 0;
+  const margin = () => Math.max(1, parseInt(cfg.min_margin || 1, 10));
+  function targetFor(setNo){ if(cfg.rule_code === 'volleyball' && parseInt(setNo,10) === maxSets){ return parseInt(cfg.deciding_target_points || cfg.target_points || cfg.points_per_set || 15,10); } return parseInt(cfg.target_points || cfg.points_per_set || 21,10); }
   function nowText(){ const d=new Date(); return d.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
+  function setStatus(a,b,setNo){
+    const target=targetFor(setNo), c=cap(), m=margin(), high=Math.max(a,b), low=Math.min(a,b), diff=high-low;
+    if(c && high>c) return {state:'bad', text:`คะแนนเกินเพดาน ${c} แต้ม`, complete:false};
+    if(a===0 && b===0) return {state:'empty', text:'รอบันทึก', complete:false};
+    if(a===b) return {state:'warn', text:'ยังไม่จบ / คะแนนเสมอ', complete:false};
+    let complete=false;
+    if(cfg.rule_code === 'sepak_takraw') complete = high>=target && (diff>=m || (c && high>=c));
+    else if(c) complete = (high>=target && diff>=m) || (high>=c && high>low);
+    else complete = high>=target && diff>=m;
+    const winner = a>b ? teamA : teamB;
+    if(complete) return {state:'done', text:`${winner} ชนะเซต`, complete:true};
+    if(high>=target) return {state:'warn', text:`ต้องห่าง ${m} แต้ม`, complete:false};
+    return {state:'warn', text:`ยังไม่จบ · เป้าหมาย ${target}`, complete:false};
+  }
+  function showWarning(text){ const box=document.getElementById('scoreWarning'); if(!box) return; box.textContent=text||''; box.classList.toggle('show', !!text); }
   function updateActiveUI(){
     document.getElementById('activeSetLabel').textContent = `เซต ${activeSet}`;
     document.querySelectorAll('.js-set-btn').forEach(btn => btn.classList.toggle('active', parseInt(btn.dataset.set,10)===activeSet));
@@ -116,46 +139,35 @@
   }
   function updateWinners(){
     for(let i=1;i<=maxSets;i++){
-      const a=val(i,'a'), b=val(i,'b');
-      const el=document.getElementById(`setWinner${i}`);
+      const a=val(i,'a'), b=val(i,'b'), st=setStatus(a,b,i);
+      const el=document.getElementById(`setWinner${i}`); const tl=document.getElementById(`targetLabel${i}`);
+      if(tl){ const c=cap(); tl.textContent = c ? `เป้าหมาย ${targetFor(i)} · สูงสุด ${c}` : `เป้าหมาย ${targetFor(i)} · ห่าง ${margin()}`; }
       if(!el) continue;
-      if(a===0 && b===0){ el.textContent='-'; el.className='small fw-bold text-muted'; }
-      else if(a>b){ el.textContent=teamA; el.className='small fw-bold text-success'; }
-      else if(b>a){ el.textContent=teamB; el.className='small fw-bold text-success'; }
-      else { el.textContent='เสมอ/ยังไม่จบ'; el.className='small fw-bold text-warning'; }
+      el.textContent=st.text; el.className=`winner-box ${st.state}`;
     }
   }
   function renderHistory(){
-    const body=document.getElementById('historyBody');
-    if(!body) return;
+    const body=document.getElementById('historyBody'); if(!body) return;
     if(!history.length){ body.innerHTML='<tr><td colspan="5" class="text-muted">ยังไม่มีประวัติแต้ม</td></tr>'; }
-    else{
-      body.innerHTML = history.slice().reverse().map((h,idx)=>`<tr><td>${history.length-idx}</td><td>เซต ${h.set}</td><td>${escapeHtml(h.team||'')}</td><td>${h.a} - ${h.b}</td><td>${escapeHtml(h.at||'')}</td></tr>`).join('');
-    }
+    else{ body.innerHTML = history.slice().reverse().map((h,idx)=>`<tr><td>${history.length-idx}</td><td>เซต ${h.set}</td><td>${escapeHtml(h.team||'')}</td><td>${h.a} - ${h.b}</td><td>${escapeHtml(h.at||'')}</td></tr>`).join(''); }
     document.getElementById('scoreHistoryInput').value = JSON.stringify(history);
   }
   function escapeHtml(s){ return String(s).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
-  document.querySelectorAll('.js-set-btn').forEach(btn => btn.addEventListener('click',()=>{ activeSet=parseInt(btn.dataset.set,10); updateActiveUI(); }));
+  document.querySelectorAll('.js-set-btn').forEach(btn => btn.addEventListener('click',()=>{ activeSet=parseInt(btn.dataset.set,10); showWarning(''); updateActiveUI(); }));
   document.querySelectorAll('.js-score-team').forEach(card => card.addEventListener('click',()=>{
-    const side=card.dataset.side;
-    setVal(activeSet, side, val(activeSet, side)+1);
+    const current=setStatus(val(activeSet,'a'), val(activeSet,'b'), activeSet);
+    if(current.complete){ showWarning(`เซต ${activeSet} จบแล้ว หากต้องแก้ให้พิมพ์ตัวเลขเองหรือล้างเซตก่อน`); return; }
+    const side=card.dataset.side, c=cap(), next=val(activeSet, side)+1;
+    if(c && next>c){ showWarning(`กติกานี้ไม่อนุญาตให้เกิน ${c} แต้ม`); return; }
+    setVal(activeSet, side, next);
     const a=val(activeSet,'a'), b=val(activeSet,'b');
     history.push({no:history.length+1,set:activeSet,side:side,team:side==='a'?teamA:teamB,a:a,b:b,at:nowText()});
-    renderHistory(); updateActiveUI();
+    showWarning(''); renderHistory(); updateActiveUI();
   }));
-  document.getElementById('undoPointBtn').addEventListener('click',()=>{
-    const last=history.pop();
-    if(last){ setVal(last.set, last.side, val(last.set,last.side)-1); activeSet=last.set; }
-    renderHistory(); updateActiveUI();
-  });
-  document.getElementById('resetActiveSetBtn').addEventListener('click',()=>{
-    if(!confirm(`ล้างแต้มเซต ${activeSet}?`)) return;
-    setVal(activeSet,'a',0); setVal(activeSet,'b',0);
-    history = history.filter(h => parseInt(h.set,10)!==activeSet);
-    history.forEach((h,i)=>h.no=i+1);
-    renderHistory(); updateActiveUI();
-  });
-  document.querySelectorAll('.js-set-input').forEach(el => el.addEventListener('input',()=>{ if(parseInt(el.dataset.set,10)===activeSet) updateActiveUI(); else updateWinners(); }));
+  document.getElementById('undoPointBtn').addEventListener('click',()=>{ const last=history.pop(); if(last){ setVal(last.set, last.side, val(last.set,last.side)-1); activeSet=last.set; } showWarning(''); renderHistory(); updateActiveUI(); });
+  document.getElementById('resetActiveSetBtn').addEventListener('click',()=>{ if(!confirm(`ล้างแต้มเซต ${activeSet}?`)) return; setVal(activeSet,'a',0); setVal(activeSet,'b',0); history = history.filter(h => parseInt(h.set,10)!==activeSet); history.forEach((h,i)=>h.no=i+1); showWarning(''); renderHistory(); updateActiveUI(); });
+  document.querySelectorAll('.js-set-input').forEach(el => el.addEventListener('input',()=>{ const c=cap(); if(c && parseInt(el.value||'0',10)>c){ el.value=c; showWarning(`กติกานี้ไม่อนุญาตให้เกิน ${c} แต้ม`); } if(parseInt(el.dataset.set,10)===activeSet) updateActiveUI(); else updateWinners(); }));
+  document.getElementById('setScoreForm').addEventListener('submit',(e)=>{ for(let i=1;i<=maxSets;i++){ const st=setStatus(val(i,'a'),val(i,'b'),i); if(st.state==='bad'){ e.preventDefault(); showWarning(`เซต ${i}: ${st.text}`); return; } } });
   renderHistory(); updateActiveUI();
 })();
 </script>

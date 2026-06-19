@@ -6,16 +6,164 @@
   <div>
     <h4>{{ comp.name }}</h4>
     <div class="text-muted small">
-      {{ comp.sport_division.label if comp.sport_division else 'Round Robin' }} · ชนะ {{ comp.win_points }} เสมอ {{ comp.draw_points }} แพ้ {{ comp.loss_points }} · บันทึกผล: {{ result_type }}
+      {{ comp.sport_division.label if comp.sport_division else 'Round Robin' }} ·
+      ชนะ {{ comp.win_points }} เสมอ {{ comp.draw_points }} แพ้ {{ comp.loss_points }} ·
+      บันทึกผล: {{ result_type }}
     </div>
   </div>
-  <div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('rr_assign', comp_id=comp.id) }}">จัดกลุ่ม</a><a class="btn btn-light" href="{{ url_for('event_round_robin', event_id=comp.event_id) }}">กลับ</a></div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{{ url_for('rr_assign', comp_id=comp.id) }}">จัดกลุ่ม</a>
+    <a class="btn btn-light" href="{{ url_for('event_round_robin', event_id=comp.event_id) }}">กลับ</a>
+  </div>
 </div>
+
 <div class="row g-3 mb-3">
-{% for group in comp.groups %}
-<div class="col-xl-6"><div class="card soft-card h-100"><div class="card-body"><h5>ตารางคะแนน กลุ่ม {{ group.name }}</h5><div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>#</th><th>ทีม</th><th>แข่ง</th><th>ชนะ</th><th>เสมอ</th><th>แพ้</th><th>{{ 'แต้มได้' if result_type=='set_based' else 'ได้' }}</th><th>{{ 'แต้มเสีย' if result_type=='set_based' else 'เสีย' }}</th><th>+/-</th>{% if result_type=='set_based' %}<th>เซต +/-</th>{% endif %}<th>คะแนน</th></tr></thead><tbody>{% for row in standings.get(group.id, []) %}<tr class="{{ 'table-success' if row.rank<=comp.advance_per_group else '' }}"><td>{{ row.rank }}</td><td>{{ row.team.name }}</td><td>{{ row.played }}</td><td>{{ row.wins }}</td><td>{{ row.draws }}</td><td>{{ row.losses }}</td><td>{{ row.goals_for }}</td><td>{{ row.goals_against }}</td><td>{{ row.goal_diff }}</td>{% if result_type=='set_based' %}<td>{{ row.set_diff }}</td>{% endif %}<td><b>{{ row.points }}</b></td></tr>{% else %}<tr><td colspan="{{ 11 if result_type=='set_based' else 10 }}" class="text-muted">ยังไม่มีทีมในกลุ่ม</td></tr>{% endfor %}</tbody></table></div></div></div></div>
-{% endfor %}
+  {% for group in comp.groups %}
+  <div class="col-xl-6">
+    <div class="card soft-card h-100">
+      <div class="card-body">
+        <h5>ตารางคะแนน กลุ่ม {{ group.name }}</h5>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>#</th><th>ทีม</th><th>แข่ง</th><th>ชนะ</th><th>เสมอ</th><th>แพ้</th>
+                <th>{{ 'แต้มได้' if result_type=='set_based' else 'ได้' }}</th>
+                <th>{{ 'แต้มเสีย' if result_type=='set_based' else 'เสีย' }}</th>
+                <th>+/-</th>
+                {% if result_type=='set_based' %}<th>เซต +/-</th>{% endif %}
+                <th>คะแนน</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in standings.get(group.id, []) %}
+              <tr class="{{ 'table-success' if row.rank<=comp.advance_per_group else '' }}">
+                <td>{{ row.rank }}</td>
+                <td>{{ row.team.name }}</td>
+                <td>{{ row.played }}</td>
+                <td>{{ row.wins }}</td>
+                <td>{{ row.draws }}</td>
+                <td>{{ row.losses }}</td>
+                <td>{{ row.goals_for }}</td>
+                <td>{{ row.goals_against }}</td>
+                <td>{{ row.goal_diff }}</td>
+                {% if result_type=='set_based' %}<td>{{ row.set_diff }}</td>{% endif %}
+                <td><b>{{ row.points }}</b></td>
+              </tr>
+              {% else %}
+              <tr><td colspan="{{ 11 if result_type=='set_based' else 10 }}" class="text-muted">ยังไม่มีทีมในกลุ่ม</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
 </div>
-<div class="card soft-card mb-3"><div class="card-body"><h5>ทีมเข้ารอบ</h5><div class="row g-2">{% for q in qualifiers %}<div class="col-md-3"><div class="border rounded p-2"><b>{{ q.team.name }}</b><div class="small text-muted">{{ q.reason }} · {{ q.points }} คะแนน</div></div></div>{% else %}<div class="col-12 text-muted">ยังไม่มีข้อมูลเข้ารอบ หรือยังไม่ได้จัดกลุ่ม</div>{% endfor %}</div><button class="btn btn-outline-primary mt-3" disabled>สร้างรอบ Knockout ต่อ (เฟสถัดไป)</button></div></div>
-<div class="card soft-card"><div class="card-body"><h5>โปรแกรม/บันทึกผล</h5>{% for group in comp.groups %}<h6 class="mt-3">กลุ่ม {{ group.name }}</h6><div class="table-responsive"><table class="table align-middle"><thead><tr><th>คู่</th><th>ทีม A</th><th>ผล</th><th>ทีม B</th><th>{{ 'คะแนนรายเซต' if result_type=='set_based' else 'หมายเหตุ' }}</th><th>บันทึก</th></tr></thead><tbody>{% for m in comp.matches|selectattr('group_id','equalto',group.id) %}<tr id="match-{{ m.id }}"><td>{{ m.match_no }}</td><td>{{ m.team_a.name }}</td><td>{% if result_type == 'set_based' %}<b>{{ '-' if m.set_a is none else m.set_a }} - {{ '-' if m.set_b is none else m.set_b }}</b> เซต{% else %}<form class="d-flex gap-1" method="post" action="{{ url_for('rr_match_score', match_id=m.id) }}"><input class="form-control form-control-sm score-box" name="score_a" value="{{ '' if m.score_a is none else m.score_a }}"><span class="pt-1">-</span><input class="form-control form-control-sm score-box" name="score_b" value="{{ '' if m.score_b is none else m.score_b }}">{% endif %}</td><td>{{ m.team_b.name }}</td><td>{% if result_type == 'set_based' %}<span class="small text-muted">{{ m.set_scores or 'ยังไม่บันทึกคะแนนรายเซต' }}</span>{% else %}<input class="form-control form-control-sm" name="note" value="{{ m.note or '' }}">{% endif %}</td><td>{% if result_type == 'set_based' %}<a class="btn btn-sm btn-primary" href="{{ url_for('rr_match_result', match_id=m.id) }}">บันทึกรายเซต</a>{% else %}<button class="btn btn-sm btn-primary">บันทึก</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="6" class="text-muted">ยังไม่มีตารางแข่งขัน</td></tr>{% endfor %}</tbody></table></div>{% endfor %}</div></div>
+
+<div class="card soft-card mb-3">
+  <div class="card-body">
+    <h5>ทีมเข้ารอบ</h5>
+    <div class="row g-2">
+      {% for q in qualifiers %}
+      <div class="col-md-3">
+        <div class="border rounded p-2">
+          <b>{{ q.team.name }}</b>
+          <div class="small text-muted">{{ q.reason }} · {{ q.points }} คะแนน</div>
+        </div>
+      </div>
+      {% else %}
+      <div class="col-12 text-muted">ยังไม่มีข้อมูลเข้ารอบ หรือยังไม่ได้จัดกลุ่ม</div>
+      {% endfor %}
+    </div>
+    <form method="post" action="{{ url_for('rr_create_knockout', comp_id=comp.id) }}" class="mt-3">
+      <button class="btn btn-outline-primary">สร้างรอบ Knockout ต่อ</button>
+    </form>
+  </div>
+</div>
+
+<div class="card soft-card">
+  <div class="card-body">
+    <h5>โปรแกรม/บันทึกผล</h5>
+    {% for group in comp.groups %}
+      <h6 class="mt-3">กลุ่ม {{ group.name }}</h6>
+      <div class="table-responsive">
+        <table class="table align-middle match-table">
+          <thead>
+            <tr>
+              <th style="width:54px">คู่</th>
+              <th>ทีม A</th>
+              <th style="width:140px">ผล</th>
+              <th>ทีม B</th>
+              <th>{{ 'คะแนนรายเซต' if result_type=='set_based' else 'หมายเหตุ' }}</th>
+              <th style="width:150px">บันทึก</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for m in comp.matches|selectattr('group_id','equalto',group.id) %}
+            {% set score_rows = set_score_rows(m) %}
+            <tr id="match-{{ m.id }}">
+              <td>{{ m.match_no }}</td>
+              <td class="fw-semibold">{{ m.team_a.name }}</td>
+              <td>
+                {% if result_type == 'set_based' %}
+                  <div class="set-result-main">
+                    <span>{{ '-' if m.set_a is none else m.set_a }}</span>
+                    <span class="text-muted">-</span>
+                    <span>{{ '-' if m.set_b is none else m.set_b }}</span>
+                    <small>เซต</small>
+                  </div>
+                  {% if score_rows %}
+                    <div class="small text-muted">บันทึกแล้ว {{ score_rows|length }} เซต</div>
+                  {% else %}
+                    <div class="small text-muted">รอบันทึก</div>
+                  {% endif %}
+                {% else %}
+                  <form id="rr-score-form-{{ m.id }}" method="post" action="{{ url_for('rr_match_score', match_id=m.id) }}"></form>
+                  <div class="d-flex gap-1 align-items-center">
+                    <input form="rr-score-form-{{ m.id }}" class="form-control form-control-sm score-box" name="score_a" value="{{ '' if m.score_a is none else m.score_a }}">
+                    <span>-</span>
+                    <input form="rr-score-form-{{ m.id }}" class="form-control form-control-sm score-box" name="score_b" value="{{ '' if m.score_b is none else m.score_b }}">
+                  </div>
+                {% endif %}
+              </td>
+              <td class="fw-semibold">{{ m.team_b.name }}</td>
+              <td>
+                {% if result_type == 'set_based' %}
+                  {% if score_rows %}
+                    <div class="set-score-line">
+                      {% for s in score_rows %}
+                      <span class="set-score-pill {{ 'win-a' if s.winner == 'a' else 'win-b' if s.winner == 'b' else '' }}">
+                        <span class="set-label">S{{ s.set }}</span>
+                        <strong>{{ s.a }}–{{ s.b }}</strong>
+                      </span>
+                      {% endfor %}
+                    </div>
+                    {% set totals = set_point_totals(m) %}
+                    <div class="small text-muted mt-1">แต้มรวม {{ totals[0] }}–{{ totals[1] }}</div>
+                  {% else %}
+                    <span class="set-score-empty">ยังไม่บันทึกคะแนนรายเซต</span>
+                  {% endif %}
+                {% else %}
+                  <input form="rr-score-form-{{ m.id }}" class="form-control form-control-sm" name="note" value="{{ m.note or '' }}">
+                {% endif %}
+              </td>
+              <td>
+                {% if result_type == 'set_based' %}
+                  <a class="btn btn-sm btn-primary" href="{{ url_for('rr_match_result', match_id=m.id) }}">บันทึก/แก้ไข</a>
+                {% else %}
+                  <button form="rr-score-form-{{ m.id }}" class="btn btn-sm btn-primary">บันทึก</button>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-muted">ยังไม่มีตารางแข่งขัน</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endfor %}
+  </div>
+</div>
 {% endblock %}

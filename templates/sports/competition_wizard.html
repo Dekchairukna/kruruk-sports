@@ -1,0 +1,306 @@
+{% extends 'base.html' %}
+{% block page_title %}สร้างการแข่งขัน · {{ event.name }}{% endblock %}
+{% block content %}
+<style>
+  .simple-hero{background:linear-gradient(135deg,#fef3c7,#eff6ff);border:1px solid #fde68a;border-radius:24px;padding:20px;box-shadow:0 12px 30px rgba(15,23,42,.05)}
+  .step-card{border:1px solid #e5e7eb;border-radius:22px;background:#fff;box-shadow:0 10px 28px rgba(15,23,42,.05);padding:18px;margin-bottom:14px}
+  .step-no{width:38px;height:38px;border-radius:14px;background:#2563eb;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:800;margin-right:10px}
+  .team-pill{border:1px solid #e5e7eb;border-radius:16px;background:#fff;padding:10px 12px;display:block;height:100%}
+  .team-pill:has(input:checked){background:#f0fdf4;border-color:#22c55e}
+  .help-box{border:1px dashed #93c5fd;background:#eff6ff;border-radius:16px;padding:12px}
+  .setting-box{background:#f8fafc;border:1px solid #e5e7eb;border-radius:16px;padding:14px}
+  .sticky-create{position:sticky;bottom:12px;z-index:10;background:rgba(255,255,255,.96);border:1px solid #e5e7eb;border-radius:18px;padding:12px;box-shadow:0 10px 28px rgba(15,23,42,.10)}
+</style>
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+  <div>
+    <h4 class="mb-1">สร้างการแข่งขัน</h4>
+    <div class="text-muted small">เลือกกีฬา → เอาทีมที่ไม่ส่งออก → เลือกระบบแข่ง/เซต/คะแนน → สร้างรายการ</div>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    <form method="post" action="{{ url_for('sport_seed_defaults', event_id=event.id) }}">
+      <button class="btn btn-outline-primary"><i class="bi bi-magic"></i> ล้างคลังเดิม + สร้างชุดล่าสุด</button>
+    </form>
+    <a class="btn btn-outline-secondary" href="{{ url_for('event_sports', event_id=event.id) }}">คลังกีฬา</a>
+    <a class="btn btn-light" href="{{ url_for('event_detail', event_id=event.id) }}">กลับหน้างาน</a>
+  </div>
+</div>
+
+<div class="simple-hero mb-3">
+  <b>หน้าเดียวจบ</b>
+  <div class="text-muted small mt-1">หน้านี้ไม่ต้องรู้คำว่า Round Robin / Ranking / Knockout จากหน้าแรกแล้ว ให้เลือกจากคำอธิบายง่าย ๆ เช่น “แบ่ง 4 กลุ่ม เอาที่ 1-2” หรือ “น็อคเอาท์สายติดกัน” ทีมทุกทีมจะถูกเลือกไว้ก่อน ทีมไหนไม่ส่งค่อยเอาติ๊กออก</div>
+</div>
+
+{% if not teams %}
+<div class="alert alert-warning border-0 shadow-sm">ยังไม่มีทีม/สีในอีเว้นท์นี้ ต้องเพิ่มทีม/สีก่อน แล้วค่อยสร้างการแข่งขัน</div>
+{% endif %}
+
+<form method="post" id="simpleCompetitionForm">
+  <div class="step-card">
+    <h5 class="mb-3"><span class="step-no">1</span>เลือกกีฬา</h5>
+    <div class="row g-3">
+      <div class="col-lg-6">
+        <label class="form-label">เลือกจากคลังกีฬา</label>
+        <select class="form-select form-select-lg" name="sport_id" id="sportSelect">
+          <option value="">-- เลือกกีฬา --</option>
+          {% for s in sports %}
+          <option value="{{ s.id }}"
+                  data-name="{{ s.name }}"
+                  data-result="{{ s.result_type or 'score_only' }}"
+                  data-format="{{ s.default_format or 'round_robin' }}"
+                  data-max-sets="{{ s.max_sets or 0 }}"
+                  data-points="{{ s.points_per_set or 0 }}"
+                  data-win="{{ s.sets_to_win or 0 }}">
+            {{ s.name }}{% if s.category %} · {{ s.category.name }}{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+        {% if not sports %}
+        <div class="form-text text-danger">ยังไม่มีคลังกีฬา กด “ล้างคลังเดิม + สร้างชุดล่าสุด” ด้านบน หรือพิมพ์ชื่อกีฬาเองด้านขวา</div>
+        {% endif %}
+      </div>
+      <div class="col-lg-6">
+        <label class="form-label">หรือพิมพ์กีฬาใหม่</label>
+        <input class="form-control form-control-lg" name="sport_name" id="sportNameInput" list="sportPresetList" placeholder="เช่น วอลเลย์บอล ฟุตบอล ฟุตซอล เปตอง">
+        <datalist id="sportPresetList">
+          {% for p in sport_presets %}<option value="{{ p.name }}"></option>{% endfor %}
+        </datalist>
+        <div class="form-text">ถ้าเลือกจากคลังแล้ว ช่องนี้เว้นว่างได้</div>
+      </div>
+      <div class="col-md-8">
+        <label class="form-label">ชื่อรายการ</label>
+        <input class="form-control" name="name" id="competitionName" placeholder="เว้นว่างได้ เช่น วอลเลย์บอล Open รวม">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">รุ่น/ระดับ</label>
+        <input class="form-control" name="class_name" value="Open" placeholder="Open">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">เพศ/ประเภท</label>
+        <select class="form-select" name="gender">
+          <option>ชาย</option><option>หญิง</option><option>ผสม</option><option selected>รวม</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <h5 class="mb-0"><span class="step-no">2</span>เลือกทีมที่ส่งแข่ง</h5>
+      <div class="d-flex flex-wrap gap-2 align-items-center">
+        <span class="badge text-bg-success fs-6"><span id="teamCount">0</span> ทีม</span>
+        <button type="button" class="btn btn-sm btn-outline-primary" id="selectAllTeams">เลือกทั้งหมด</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="clearAllTeams">เอาออกทั้งหมด</button>
+      </div>
+    </div>
+    <div class="row g-2">
+      {% for team in teams %}
+      <div class="col-md-6 col-xl-4">
+        <label class="team-pill">
+          <input class="form-check-input me-2 team-input" type="checkbox" name="team_ids" value="{{ team.id }}" checked>
+          <span class="fw-semibold">{{ team.name }}</span>
+          <span class="text-muted small">{{ team.color_name or '' }}</span>
+        </label>
+      </div>
+      {% else %}
+      <div class="col-12"><div class="text-muted">ยังไม่มีทีม</div></div>
+      {% endfor %}
+    </div>
+    <div class="form-text mt-2">ระบบเลือกทุกทีมในอีเว้นท์ให้ก่อน ทีมไหนไม่ส่งหรือถอนตัว ให้เอาติ๊กออก</div>
+  </div>
+
+  <div class="step-card">
+    <h5 class="mb-3"><span class="step-no">3</span>เลือกระบบแข่งและกติกา</h5>
+    <div class="row g-3">
+      <div class="col-lg-5">
+        <label class="form-label">สูตรจัดการแข่งขัน</label>
+        <select class="form-select form-select-lg" id="planSelect">
+          <option value="auto" selected>ให้ระบบแนะนำตามจำนวนทีม</option>
+          <option value="rr_1_all">พบกันหมด 1 กลุ่ม</option>
+          <option value="rr_2_top2">แบ่ง 2 กลุ่ม · เอาที่ 1-2 เข้ารอบ</option>
+          <option value="rr_4_top2">แบ่ง 4 กลุ่ม · เอาที่ 1-2 เข้ารอบ</option>
+          <option value="rr_4_top1">แบ่ง 4 กลุ่ม · เอาเฉพาะที่ 1 เข้ารอบ</option>
+          <option value="rr_3_top1_best1">แบ่ง 3 กลุ่ม · ที่ 1 + รองดีที่สุด 1</option>
+          <option value="ko_adjacent">น็อคเอาท์ · bracket สายติดกัน</option>
+          <option value="ko_balanced">น็อคเอาท์ · seed 1 เจอท้ายสุด</option>
+          <option value="ranking">จัดอันดับ เวลา/ระยะ/คะแนนรวม</option>
+          <option value="contest">กรรมการให้คะแนน</option>
+          <option value="custom">กำหนดเอง</option>
+        </select>
+        <div class="help-box mt-3">
+          <div class="small text-muted">คำแนะนำ</div>
+          <div class="fw-semibold" id="recommendText">ระบบจะคำนวณจากจำนวนทีม</div>
+        </div>
+      </div>
+      <div class="col-lg-7">
+        <div class="setting-box">
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label">รูปแบบจริงที่ระบบจะสร้าง</label>
+              <select class="form-select" name="competition_format" id="competitionFormat">
+                <option value="round_robin">แบ่งกลุ่ม / พบกันหมดก่อน</option>
+                <option value="knockout">น็อคเอาท์ / แพ้คัดออก</option>
+                <option value="ranking">จัดอันดับ</option>
+                <option value="score_judging">กรรมการให้คะแนน</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">วิธีบันทึกผล</label>
+              <select class="form-select" name="result_type" id="resultType">
+                <option value="score_only">คะแนนรวม เช่น ฟุตบอล/เปตอง</option>
+                <option value="set_based">รายเซต เช่น วอลเลย์บอล/ตะกร้อ</option>
+                <option value="ranking">อันดับ/เวลา/ระยะ เช่น กรีฑา</option>
+                <option value="contest">คะแนนกรรมการ</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="row g-2 mt-2" id="setFields">
+            <div class="col-md-4"><label class="form-label">เซตสูงสุด</label><input class="form-control" type="number" name="max_sets" id="maxSets" value="5" min="0"></div>
+            <div class="col-md-4"><label class="form-label">แต้ม/เซต</label><input class="form-control" type="number" name="points_per_set" id="pointsPerSet" value="25" min="0"></div>
+            <div class="col-md-4"><label class="form-label">ชนะกี่เซต</label><input class="form-control" type="number" name="sets_to_win" id="setsToWin" value="3" min="0"></div>
+          </div>
+
+          <div class="row g-2 mt-2" id="rrFields">
+            <div class="col-md-4"><label class="form-label">จำนวนกลุ่ม</label><input class="form-control" type="number" name="num_groups" id="numGroups" value="1" min="1"></div>
+            <div class="col-md-4"><label class="form-label">เข้ารอบ/กลุ่ม</label><input class="form-control" type="number" name="advance_per_group" id="advancePerGroup" value="1" min="0"></div>
+            <div class="col-md-4"><label class="form-label">รองดีที่สุด</label><input class="form-control" type="number" name="best_runnerup_count" id="bestRunnerup" value="0" min="0"></div>
+            <input type="hidden" name="win_points" value="3">
+            <input type="hidden" name="draw_points" value="1">
+            <input type="hidden" name="loss_points" value="0">
+          </div>
+
+          <div class="mt-2" id="koFields">
+            <label class="form-label">การวางสาย</label>
+            <select class="form-select" name="bracket_pairing" id="bracketPairing">
+              <option value="adjacent" selected>สายติดกัน: ทีม 1-2, 3-4 แล้วผู้ชนะเจอกันต่อ</option>
+              <option value="balanced">แบบ seed: 1 พบท้ายสุด, 2 พบรองท้ายสุด</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sticky-create">
+    <button class="btn btn-primary btn-lg w-100" {% if not teams %}disabled{% endif %}><i class="bi bi-check2-circle"></i> สร้างการแข่งขัน</button>
+  </div>
+</form>
+
+<script>
+(function(){
+  const presets = {{ sport_presets|tojson }};
+  const sportSelect = document.getElementById('sportSelect');
+  const sportNameInput = document.getElementById('sportNameInput');
+  const teamInputs = [...document.querySelectorAll('.team-input')];
+  const teamCount = document.getElementById('teamCount');
+  const planSelect = document.getElementById('planSelect');
+  const resultType = document.getElementById('resultType');
+  const competitionFormat = document.getElementById('competitionFormat');
+  const recommendText = document.getElementById('recommendText');
+  const numGroups = document.getElementById('numGroups');
+  const advancePerGroup = document.getElementById('advancePerGroup');
+  const bestRunnerup = document.getElementById('bestRunnerup');
+  const bracketPairing = document.getElementById('bracketPairing');
+  const maxSets = document.getElementById('maxSets');
+  const pointsPerSet = document.getElementById('pointsPerSet');
+  const setsToWin = document.getElementById('setsToWin');
+  const setFields = document.getElementById('setFields');
+  const rrFields = document.getElementById('rrFields');
+  const koFields = document.getElementById('koFields');
+
+  function selectedTeamCount(){ return teamInputs.filter(x => x.checked).length; }
+  function currentSportName(){
+    const opt = sportSelect.options[sportSelect.selectedIndex];
+    return (sportNameInput.value || (opt && opt.dataset.name) || '').trim();
+  }
+  function presetForName(name){
+    const n = (name || '').trim().toLowerCase();
+    return presets.find(p => (p.name || '').trim().toLowerCase() === n);
+  }
+  function rec(teamN){
+    const name = currentSportName();
+    const n = name.toLowerCase();
+    if(resultType.value === 'ranking' || n.includes('กรีฑา') || n.includes('วิ่ง')) return {fmt:'ranking', groups:1, adv:0, best:0, text:'กีฬาวัดเวลา/ระยะ ใช้จัดอันดับ'};
+    if(resultType.value === 'contest') return {fmt:'score_judging', groups:1, adv:0, best:0, text:'กิจกรรมประกวด ใช้กรรมการให้คะแนน'};
+    if(teamN <= 1) return {fmt:'round_robin', groups:1, adv:0, best:0, text:'ยังมีทีมไม่พอ ต้องมีอย่างน้อย 2 ทีม'};
+    if(teamN === 2) return {fmt:'knockout', groups:1, adv:1, best:0, text:'2 ทีม แนะนำชิงทันที'};
+    if(teamN <= 5) return {fmt:'round_robin', groups:1, adv:1, best:0, text:teamN+' ทีม แนะนำพบกันหมด 1 กลุ่ม'};
+    if(teamN <= 8) return {fmt:'round_robin', groups:2, adv:2, best:0, text:teamN+' ทีม แนะนำแบ่ง 2 กลุ่ม เอาที่ 1-2 เข้ารอบ'};
+    if(teamN <= 12) return {fmt:'round_robin', groups:4, adv:2, best:0, text:teamN+' ทีม นิยมแบ่ง 4 กลุ่ม เอาที่ 1-2 หรือเอาเฉพาะที่ 1'};
+    return {fmt:'round_robin', groups:4, adv:2, best:0, text:teamN+' ทีมขึ้นไป แนะนำแบ่ง 4 กลุ่มก่อน'};
+  }
+  function plan(){
+    const teamN = selectedTeamCount();
+    const auto = rec(teamN);
+    const map = {
+      auto: auto,
+      rr_1_all:{fmt:'round_robin',groups:1,adv:1,best:0,text:'พบกันหมด 1 กลุ่ม'},
+      rr_2_top2:{fmt:'round_robin',groups:2,adv:2,best:0,text:'แบ่ง 2 กลุ่ม เอาที่ 1-2 เข้ารอบ แล้วไขว้ A1-B2 / B1-A2'},
+      rr_4_top2:{fmt:'round_robin',groups:4,adv:2,best:0,text:'แบ่ง 4 กลุ่ม เอาที่ 1-2 เข้ารอบ รวม 8 ทีม'},
+      rr_4_top1:{fmt:'round_robin',groups:4,adv:1,best:0,text:'แบ่ง 4 กลุ่ม เอาเฉพาะที่ 1 เข้ารอบ รวม 4 ทีม'},
+      rr_3_top1_best1:{fmt:'round_robin',groups:3,adv:1,best:1,text:'แบ่ง 3 กลุ่ม เอาที่ 1 + รองดีที่สุด 1'},
+      ko_adjacent:{fmt:'knockout',groups:1,adv:1,best:0,text:'น็อคเอาท์ สายติดกัน 1-2, 3-4 เล่นต่อจนจบ'},
+      ko_balanced:{fmt:'knockout',groups:1,adv:1,best:0,text:'น็อคเอาท์ แบบ seed 1 เจอท้ายสุด'},
+      ranking:{fmt:'ranking',groups:1,adv:0,best:0,text:'จัดอันดับตามเวลา ระยะ หรือคะแนนรวม'},
+      contest:{fmt:'score_judging',groups:1,adv:0,best:0,text:'กรรมการให้คะแนน'},
+      custom:auto
+    };
+    return map[planSelect.value] || auto;
+  }
+  function refresh(applyPlan=true){
+    const teamN = selectedTeamCount();
+    teamCount.textContent = teamN;
+    const p = plan();
+    recommendText.textContent = p.text;
+    if(applyPlan && planSelect.value !== 'custom'){
+      competitionFormat.value = p.fmt;
+      numGroups.value = p.groups;
+      advancePerGroup.value = p.adv;
+      bestRunnerup.value = p.best;
+      bracketPairing.value = planSelect.value === 'ko_balanced' ? 'balanced' : 'adjacent';
+    }
+    setFields.style.display = resultType.value === 'set_based' ? '' : 'none';
+    rrFields.style.display = competitionFormat.value === 'round_robin' ? '' : 'none';
+    koFields.style.display = competitionFormat.value === 'knockout' ? '' : 'none';
+  }
+  function applySportDefaults(){
+    const opt = sportSelect.options[sportSelect.selectedIndex];
+    const typedPreset = presetForName(sportNameInput.value);
+    if(typedPreset){
+      resultType.value = typedPreset.result || 'score_only';
+      if(typedPreset.result === 'set_based'){
+        maxSets.value = typedPreset.max_sets || 3;
+        pointsPerSet.value = typedPreset.points || 21;
+        setsToWin.value = typedPreset.win || 2;
+      }
+    }else if(opt && opt.value){
+      resultType.value = opt.dataset.result || 'score_only';
+      if(resultType.value === 'set_based'){
+        maxSets.value = opt.dataset.maxSets || 3;
+        pointsPerSet.value = opt.dataset.points || 21;
+        setsToWin.value = opt.dataset.win || 2;
+      }
+    }
+    refresh(true);
+  }
+  teamInputs.forEach(x => x.addEventListener('change', () => refresh(true)));
+  document.getElementById('selectAllTeams').addEventListener('click', () => { teamInputs.forEach(x => x.checked = true); refresh(true); });
+  document.getElementById('clearAllTeams').addEventListener('click', () => { teamInputs.forEach(x => x.checked = false); refresh(true); });
+  sportSelect.addEventListener('change', applySportDefaults);
+  sportNameInput.addEventListener('input', applySportDefaults);
+  planSelect.addEventListener('change', () => refresh(true));
+  resultType.addEventListener('change', () => refresh(true));
+  competitionFormat.addEventListener('change', () => refresh(false));
+  document.getElementById('simpleCompetitionForm').addEventListener('submit', function(e){
+    if(!sportSelect.value && !sportNameInput.value.trim()){
+      e.preventDefault(); alert('กรุณาเลือกหรือพิมพ์ชื่อกีฬา'); return;
+    }
+    if(selectedTeamCount() < 2 && !['ranking','score_judging'].includes(competitionFormat.value)){
+      e.preventDefault(); alert('กรุณาเลือกทีมอย่างน้อย 2 ทีม'); return;
+    }
+  });
+  refresh(true);
+})();
+</script>
+{% endblock %}

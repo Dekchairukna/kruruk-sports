@@ -17,9 +17,11 @@
           <a class="btn btn-outline-primary" href="{{ url_for('event_edit', event_id=event.id) }}"><i class="bi bi-pencil-square"></i> แก้ไขงาน</a>
           <a class="btn btn-primary" href="{{ url_for('team_new', event_id=event.id) }}"><i class="bi bi-plus-circle"></i> เพิ่มทีม/สี</a>
           <a class="btn btn-warning" href="{{ url_for('event_sports', event_id=event.id) }}"><i class="bi bi-sliders"></i> ตั้งค่ากีฬา</a>
+          <a class="btn btn-primary" href="{{ url_for('event_competition_wizard', event_id=event.id) }}"><i class="bi bi-plus-circle"></i> สร้างรายการแข่ง</a>
           <a class="btn btn-success" href="{{ url_for('event_registrations', event_id=event.id) }}"><i class="bi bi-person-lines-fill"></i> นักกีฬา/ผู้ฝึกสอน</a>
           <a class="btn btn-info text-white" href="{{ url_for('event_round_robin', event_id=event.id) }}"><i class="bi bi-diagram-3"></i> Round Robin</a>
           <a class="btn btn-secondary" href="{{ url_for('event_ranking', event_id=event.id) }}"><i class="bi bi-list-ol"></i> Ranking</a>
+          <a class="btn btn-outline-secondary" href="{{ url_for('event_knockout', event_id=event.id) }}"><i class="bi bi-diagram-2"></i> Knockout</a>
           <a class="btn btn-outline-danger" href="{{ url_for('event_contests', event_id=event.id) }}"><i class="bi bi-star"></i> กิจกรรมประกวด</a>
           <a class="btn btn-dark" href="{{ url_for('event_medals', event_id=event.id) }}"><i class="bi bi-trophy"></i> Medal Table</a>
           <a class="btn btn-outline-success" href="{{ url_for('event_certificates', event_id=event.id) }}"><i class="bi bi-award"></i> Certificate</a>
@@ -60,10 +62,17 @@
 
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
-    <h5 class="mb-0">ทีม/สีในงานนี้</h5>
+    <h5 class="mb-0" id="teams-section">ทีม/สีในงานนี้</h5>
     <div class="text-muted small">รหัสทีมใช้สำหรับให้ทีมเข้ากรอกข้อมูลเอง และเพิ่มข้อมูลสูจิบัตร/รายงาน</div>
   </div>
-  <div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('team_entry') }}" target="_blank">หน้าทีมกรอกรหัส</a><a class="btn btn-primary" href="{{ url_for('team_new', event_id=event.id) }}">+ เพิ่มทีม/สี</a></div>
+  <div class="d-flex flex-wrap gap-2 align-items-center">
+    <a class="btn btn-outline-secondary" href="{{ url_for('team_entry') }}" target="_blank">หน้าทีมกรอกรหัส</a>
+    <form method="post" action="{{ url_for('event_line_invite_all', event_id=event.id) }}" onsubmit="return confirm('ส่งข้อความ LINE ให้ทุกทีม/สีที่มี LINE userId แล้วใช่ไหม?')">
+      <button class="btn btn-success" {{ '' if line_message_ready else 'disabled' }}><i class="bi bi-send"></i> ส่ง LINE ทุกสี</button>
+    </form>
+    {% if not line_message_ready %}<span class="badge text-bg-warning">ยังไม่ได้ตั้งค่า LINE_CHANNEL_ACCESS_TOKEN</span>{% endif %}
+    <a class="btn btn-primary" href="{{ url_for('team_new', event_id=event.id) }}">+ เพิ่มทีม/สี</a>
+  </div>
 </div>
 
 <div class="row g-3">
@@ -81,10 +90,19 @@
           <span class="badge {{ 'bg-success' if team.registration_open else 'bg-secondary' }}">{{ 'เปิดกรอก' if team.registration_open else 'ปิดกรอก' }}</span>
         </div>
         <div class="team-code mt-3"><span>รหัสทีม</span><b>{{ team.access_code }}</b></div>
+        <div class="small text-muted mt-2">
+          หัวหน้าสี: {{ team.line_contact_name or '-' }}<br>
+          LINE userId: {{ team.line_user_id or 'ยังไม่กรอก' }}
+          {% if team.line_invite_sent_at %}<br><span class="text-success">ส่งล่าสุด: {{ team.line_invite_sent_at.strftime('%d/%m/%Y %H:%M') }}</span>{% endif %}
+          {% if team.line_invite_error %}<br><span class="text-danger">LINE error: {{ team.line_invite_error }}</span>{% endif %}
+        </div>
         <div class="d-flex flex-wrap gap-2 mt-3">
           <a class="btn btn-sm btn-outline-primary" href="{{ url_for('team_edit', team_id=team.id) }}">แก้ไขทีม</a>
           <a class="btn btn-sm btn-primary" href="{{ url_for('team_profile', team_id=team.id) }}">ข้อมูลทีม</a>
           <a class="btn btn-sm btn-success" href="{{ url_for('event_registrations', event_id=event.id) }}">รายชื่อ</a>
+          <form method="post" action="{{ url_for('team_line_invite', team_id=team.id) }}">
+            <button class="btn btn-sm btn-outline-success" {{ '' if team.line_user_id and line_message_ready else 'disabled' }}>ส่ง LINE</button>
+          </form>
           <form method="post" action="{{ url_for('team_toggle', team_id=team.id) }}">
             <button class="btn btn-sm btn-outline-secondary">{{ 'ปิดสิทธิ์กรอก' if team.registration_open else 'เปิดสิทธิ์กรอก' }}</button>
           </form>

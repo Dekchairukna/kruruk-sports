@@ -1,35 +1,50 @@
 {% extends 'base.html' %}
-{% block page_title %}Dashboard{% endblock %}
+{% block page_title %}แดชบอร์ด{% endblock %}
 {% block content %}
+
+
 <div class="row g-3 mb-4">
-  <div class="col-md-3"><div class="stat-card gradient-1"><span>องค์กร</span><b>{{ org_count }}</b><i class="bi bi-building"></i></div></div>
-  <div class="col-md-3"><div class="stat-card gradient-2"><span>งานแข่งขันทั้งหมด</span><b>{{ event_count }}</b><i class="bi bi-trophy"></i></div></div>
-  <div class="col-md-3"><div class="stat-card gradient-3"><span>งานที่เปิดอยู่</span><b>{{ open_count }}</b><i class="bi bi-broadcast"></i></div></div>
-  <div class="col-md-3"><div class="stat-card gradient-4"><span>ทีม/สีทั้งหมด</span><b>{{ team_count }}</b><i class="bi bi-people"></i></div></div>
+  <div class="col-md-3"><div class="stat-card gradient-1"><span>งานแข่งขัน</span><b>{{ event_count }}</b><i class="bi bi-trophy"></i></div></div>
+  <div class="col-md-3"><div class="stat-card gradient-2"><span>งานเปิดอยู่</span><b>{{ open_count }}</b><i class="bi bi-broadcast"></i></div></div>
+  <div class="col-md-3"><div class="stat-card gradient-3"><span>ทีม/สีทั้งหมด</span><b>{{ team_count }}</b><i class="bi bi-people"></i></div></div>
+  <div class="col-md-3"><div class="stat-card gradient-4"><span>บริบทที่บันทึกไว้</span><b>{{ org_count }}</b><i class="bi bi-building"></i></div></div>
 </div>
-<div class="d-flex gap-2 mb-3">
-  <a class="btn btn-primary" href="{{ url_for('event_new') }}"><i class="bi bi-plus-circle"></i> สร้างงานใหม่</a>
-  <a class="btn btn-light" href="{{ url_for('organization_new') }}">เพิ่มองค์กร</a>
-</div>
-<div class="card soft-card">
-  <div class="card-header bg-white"><b>งานแข่งขันล่าสุด</b></div>
-  <div class="table-responsive">
-    <table class="table align-middle mb-0">
-      <thead><tr><th>ชื่องาน</th><th>องค์กร</th><th>สถานะ</th><th>วันที่</th><th></th></tr></thead>
-      <tbody>
-      {% for e in latest_events %}
-      <tr>
-        <td><b>{{ e.name }}</b><div class="text-muted small">{{ e.location or '-' }}</div></td>
-        <td>{{ e.organization.name }}</td>
-        <td><span class="badge status-{{ e.status }}">{{ e.status }}</span></td>
-        <td>{{ e.start_date or '-' }}</td>
-        <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('event_detail', event_id=e.id) }}">เปิด</a></td>
-      </tr>
-      {% else %}
-      <tr><td colspan="5" class="text-center text-muted py-4">ยังไม่มีงานแข่งขัน</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
+
+{% macro event_cards(title, items, empty_text) %}
+<div class="dashboard-section mb-4">
+  <div class="section-head">
+    <h5>{{ title }}</h5>
+    <span>{{ items|length }} งาน</span>
   </div>
+  {% if items %}
+  <div class="row g-3">
+    {% for e in items %}
+    <div class="col-lg-4 col-md-6">
+      <div class="event-mini-card h-100">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+          <div>
+            <div class="text-muted small">{{ e.organization.org_type }} · {{ e.organization.name }}</div>
+            <h5 class="mb-1">{{ e.name }}</h5>
+          </div>
+          <span class="badge status-{{ e.status }}">{{ e.status }}</span>
+        </div>
+        <div class="text-muted small mt-2"><i class="bi bi-geo-alt"></i> {{ e.location or '-' }}</div>
+        <div class="text-muted small"><i class="bi bi-calendar"></i> {{ e.start_date or '-' }}{% if e.end_date %} - {{ e.end_date }}{% endif %}</div>
+        <div class="d-flex gap-2 mt-3">
+          <a class="btn btn-primary flex-fill" href="{{ url_for('event_detail', event_id=e.id) }}">เข้าสู่งาน</a>
+          <a class="btn btn-outline-primary" href="{{ url_for('event_edit', event_id=e.id) }}">แก้ไข</a>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-box py-4">{{ empty_text }}</div>
+  {% endif %}
 </div>
+{% endmacro %}
+
+{{ event_cards('งานที่กำลังเปิดใช้งาน', open_events, 'ยังไม่มีงานที่เปิดใช้งาน') }}
+{{ event_cards('งานร่าง / เตรียมจัด', draft_events, 'ยังไม่มีงานร่าง') }}
+{% if other_events %}{{ event_cards('งานที่ปิดแล้ว / เก็บถาวร', other_events, 'ยังไม่มีงานกลุ่มนี้') }}{% endif %}
 {% endblock %}

@@ -47,7 +47,10 @@
         <hr>
         <h6>พิมพ์ PDF</h6>
         <div class="text-muted small mb-2">เปิดสูจิบัตรออนไลน์ แล้วกด Print / Save as PDF</div>
-        <a class="btn btn-dark" target="_blank" href="{{ url_for('event_souvenir_public', event_id=event.id) }}">เปิดหน้า Print</a>
+        <div class="d-flex flex-wrap gap-2">
+          <a class="btn btn-dark" target="_blank" href="{{ url_for('event_program_print', event_id=event.id) }}">พิมพ์รายงานโปรแกรมและการจัดการแข่งขัน</a>
+          <a class="btn btn-outline-dark" target="_blank" href="{{ url_for('event_souvenir_public', event_id=event.id) }}">เปิดสูจิบัตรออนไลน์</a>
+        </div>
       </div>
     </div>
   </div>

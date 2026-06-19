@@ -8,10 +8,14 @@ from io import BytesIO
 import base64
 import uuid
 import json
-import requests
+import hashlib
+import hmac
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
 from dotenv import load_dotenv
-from flask import Flask, flash, redirect, render_template, request, url_for, session, send_file, make_response, jsonify
+from flask import Flask, flash, redirect, render_template, request, url_for, session, send_file, make_response, jsonify, current_app
 from flask_login import current_user, login_required, login_user, logout_user
 from werkzeug.utils import secure_filename
 
@@ -21,40 +25,88 @@ from extensions import db, login_manager
 from sqlalchemy import text, inspect
 
 
+def normalize_database_url(url: str) -> str:
+    """Return a SQLAlchemy URL that works on Railway without system libpq.
+
+    Railway often provides postgresql://...; SQLAlchemy maps that to psycopg2
+    by default. psycopg2 can fail on minimal images when libpq.so.5 is absent.
+    Force psycopg v3 binary driver instead.
+    """
+    if not url:
+        return url
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    if url.startswith("postgresql+psycopg2://"):
+        url = "postgresql+psycopg://" + url[len("postgresql+psycopg2://"):]
+    elif url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url[len("postgresql://"):]
+    return url
+
+
+def int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 def create_app():
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "kruruk-sports-dev-key")
     instance_path = Path(app.instance_path)
     instance_path.mkdir(parents=True, exist_ok=True)
-    database_url = os.getenv("DATABASE_URL") or f"sqlite:///{instance_path / 'kruruk_sports.db'}"
+    raw_database_url = os.getenv("DATABASE_URL") or f"sqlite:///{instance_path / 'kruruk_sports.db'}"
+    database_url = normalize_database_url(raw_database_url)
     app.config["SQLALCHEMY_DATABASE_URI"] = database_url
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-    app.config["UPLOAD_FOLDER"] = str(Path(app.root_path) / "static" / "uploads")
-    Path(app.config["UPLOAD_FOLDER"]).mkdir(parents=True, exist_ok=True)
 
-    # Phase 13B Social Login / Phase 13C Payment Gateway
-    app.config["GOOGLE_CLIENT_ID"] = os.getenv("GOOGLE_CLIENT_ID", "")
-    app.config["GOOGLE_CLIENT_SECRET"] = os.getenv("GOOGLE_CLIENT_SECRET", "")
-    app.config["GOOGLE_REDIRECT_URI"] = os.getenv("GOOGLE_REDIRECT_URI", "")
-    app.config["LINE_CHANNEL_ID"] = os.getenv("LINE_CHANNEL_ID", "")
-    app.config["LINE_CHANNEL_SECRET"] = os.getenv("LINE_CHANNEL_SECRET", "")
-    app.config["LINE_REDIRECT_URI"] = os.getenv("LINE_REDIRECT_URI", "")
-    app.config["STRIPE_SECRET_KEY"] = os.getenv("STRIPE_SECRET_KEY", "")
-    app.config["STRIPE_PUBLIC_KEY"] = os.getenv("STRIPE_PUBLIC_KEY", "")
-    app.config["OMISE_PUBLIC_KEY"] = os.getenv("OMISE_PUBLIC_KEY", "")
-    app.config["OMISE_SECRET_KEY"] = os.getenv("OMISE_SECRET_KEY", "")
+    engine_options = {"pool_pre_ping": True}
+    if database_url.startswith("postgresql"):
+        engine_options.update({
+            "pool_recycle": 300,
+            "connect_args": {"connect_timeout": int_env("DB_CONNECT_TIMEOUT", 10)},
+        })
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = engine_options
+    app.config["UPLOAD_FOLDER"] = str(Path(app.root_path) / "static" / "uploads")
+    app.config["SOCIAL_LOGIN_ENABLED"] = os.getenv("SOCIAL_LOGIN_ENABLED", "1") == "1"
+    app.config["PAYMENT_GATEWAYS"] = [g.strip() for g in os.getenv("PAYMENT_GATEWAYS", "manual,promptpay").split(",") if g.strip()]
     app.config["PROMPTPAY_ID"] = os.getenv("PROMPTPAY_ID", "")
     app.config["PAYMENT_RETURN_BASE_URL"] = os.getenv("PAYMENT_RETURN_BASE_URL", "")
+    Path(app.config["UPLOAD_FOLDER"]).mkdir(parents=True, exist_ok=True)
+
+    @app.get("/healthz")
+    def healthz():
+        return jsonify({
+            "ok": True,
+            "service": "kruruk-sports",
+            "database_url_configured": bool(os.getenv("DATABASE_URL")),
+            "promptpay_configured": bool(os.getenv("PROMPTPAY_ID")),
+        })
 
     db.init_app(app)
     login_manager.init_app(app)
 
     with app.app_context():
         import models  # noqa: F401
-        db.create_all()
-        ensure_schema_upgrades()
-        seed_default_admin()
-        seed_subscription_plans()
+        if os.getenv("SKIP_DB_INIT", "0") == "1":
+            app.logger.warning("SKIP_DB_INIT=1: skipping db.create_all/schema seed during boot")
+            try:
+                # Even when full DB init is skipped on Railway, keep lightweight
+                # schema upgrades enabled so new columns added in models.py
+                # are created automatically on existing Postgres tables.
+                ensure_schema_upgrades()
+            except Exception:
+                app.logger.exception("Schema upgrade failed during boot")
+        else:
+            try:
+                db.create_all()
+                ensure_schema_upgrades()
+                seed_default_admin()
+                seed_subscription_plans()
+            except Exception:
+                # Do not let Railway kill the web process during boot.
+                # The exact database error will still be visible in deploy logs.
+                app.logger.exception("Database initialization failed during boot")
 
     register_routes(app)
     return app
@@ -77,22 +129,6 @@ def ensure_schema_upgrades():
             db.session.commit()
         except Exception:
             db.session.rollback()
-
-    cols = existing_columns("users")
-    if "avatar_url" not in cols:
-        add_column("users", "avatar_url VARCHAR(500)")
-    if "email_verified" not in cols:
-        add_column("users", "email_verified BOOLEAN DEFAULT 0 NOT NULL")
-    if "last_login_at" not in cols:
-        add_column("users", "last_login_at DATETIME")
-
-    cols = existing_columns("invoices")
-    if "payment_gateway" not in cols:
-        add_column("invoices", "payment_gateway VARCHAR(80) DEFAULT 'manual'")
-    if "provider_reference" not in cols:
-        add_column("invoices", "provider_reference VARCHAR(255)")
-    if "checkout_url" not in cols:
-        add_column("invoices", "checkout_url TEXT")
 
     cols = existing_columns("sports")
     if "result_type" not in cols:
@@ -117,22 +153,76 @@ def ensure_schema_upgrades():
     cols = existing_columns("round_robin_matches")
     if "set_scores" not in cols:
         add_column("round_robin_matches", "set_scores TEXT")
+    if "score_history" not in cols:
+        add_column("round_robin_matches", "score_history TEXT")
     if "point_diff" not in cols:
         add_column("round_robin_matches", "point_diff INTEGER DEFAULT 0")
 
+    cols = existing_columns("knockout_matches")
+    if "set_scores" not in cols:
+        add_column("knockout_matches", "set_scores TEXT")
+    if "score_history" not in cols:
+        add_column("knockout_matches", "score_history TEXT")
+    if "point_diff" not in cols:
+        add_column("knockout_matches", "point_diff INTEGER DEFAULT 0")
+
+    cols = existing_columns("teams")
+    if "line_user_id" not in cols:
+        add_column("teams", "line_user_id VARCHAR(120)")
+    if "line_contact_name" not in cols:
+        add_column("teams", "line_contact_name VARCHAR(180)")
+    if "line_invite_sent_at" not in cols:
+        add_column("teams", "line_invite_sent_at TIMESTAMP")
+    if "line_invite_error" not in cols:
+        add_column("teams", "line_invite_error TEXT")
+
+    cols = existing_columns("users")
+    if "username" not in cols:
+        add_column("users", "username VARCHAR(80)")
+    if "avatar_url" not in cols:
+        add_column("users", "avatar_url VARCHAR(500)")
+    if "social_provider" not in cols:
+        add_column("users", "social_provider VARCHAR(40)")
+    if "social_id" not in cols:
+        add_column("users", "social_id VARCHAR(255)")
+    if "last_login_at" not in cols:
+        add_column("users", "last_login_at DATETIME")
+
+    cols = existing_columns("invoices")
+    if "gateway_reference" not in cols:
+        add_column("invoices", "gateway_reference VARCHAR(255)")
+    if "payment_url" not in cols:
+        add_column("invoices", "payment_url TEXT")
+
+
 def seed_default_admin():
-    """Create first superadmin account for local development if it does not exist."""
+    """Create/repair the main superadmin account.
+
+    Login ID requested by user: superadmin
+    Password requested by user: yagami1225
+    Email is kept as a valid internal email because the users.email column is unique/non-null.
+    """
     from models import User
 
-    email = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@kruruksports.com").lower().strip()
-    password = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123")
+    username = os.getenv("DEFAULT_ADMIN_USERNAME", "superadmin").lower().strip()
+    email = os.getenv("DEFAULT_ADMIN_EMAIL", "superadmin@kruruksports.local").lower().strip()
+    password = os.getenv("DEFAULT_ADMIN_PASSWORD", "yagami1225")
     name = os.getenv("DEFAULT_ADMIN_NAME", "KRURUK Super Admin")
 
-    if not User.query.filter_by(email=email).first():
-        admin = User(name=name, email=email, role="superadmin")
-        admin.set_password(password)
+    admin = User.query.filter_by(username=username).first() or User.query.filter_by(email=email).first()
+    if not admin:
+        # ถ้าเคยมี admin เก่าจาก Phase ก่อน ให้ยกระดับและผูก username นี้แทนการสร้างซ้ำ
+        admin = User.query.filter_by(email="admin@kruruksports.com").first()
+    if not admin:
+        admin = User(name=name, email=email, username=username, role="superadmin")
         db.session.add(admin)
-        db.session.commit()
+    admin.name = admin.name or name
+    admin.email = admin.email or email
+    admin.username = username
+    admin.role = "superadmin"
+    # ตั้งรหัสผ่านตามที่กำหนดทุกครั้ง เพื่อกันลืมรหัสตอน deploy ใหม่
+    admin.set_password(password)
+    db.session.commit()
 
 
 
@@ -289,6 +379,302 @@ def superadmin_required(fn):
         return fn(*args, **kwargs)
     return wrapper
 
+
+# -----------------------------
+# Phase 13B: Social Login helpers
+# -----------------------------
+def oauth_configured(provider):
+    provider = provider.lower()
+    if provider == "google":
+        return bool(os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET"))
+    if provider == "line":
+        return bool(os.getenv("LINE_CLIENT_ID") and os.getenv("LINE_CLIENT_SECRET"))
+    if provider == "facebook":
+        return bool(os.getenv("FACEBOOK_CLIENT_ID") and os.getenv("FACEBOOK_CLIENT_SECRET"))
+    return False
+
+
+def available_oauth_providers():
+    providers = []
+    for code, label, icon in [
+        ("google", "Google", "bi-google"),
+        ("line", "LINE", "bi-chat-dots"),
+        ("facebook", "Facebook", "bi-facebook"),
+    ]:
+        providers.append({"code": code, "label": label, "icon": icon, "ready": oauth_configured(code)})
+    return providers
+
+
+def build_oauth_authorize_url(provider, state):
+    provider = provider.lower()
+    redirect_uri = url_for("social_callback", provider=provider, _external=True)
+    if provider == "google":
+        params = {
+            "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": "openid email profile",
+            "state": state,
+            "access_type": "offline",
+            "prompt": "select_account",
+        }
+        return "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)
+    if provider == "line":
+        params = {
+            "response_type": "code",
+            "client_id": os.getenv("LINE_CLIENT_ID"),
+            "redirect_uri": redirect_uri,
+            "state": state,
+            "scope": "profile openid email",
+        }
+        return "https://access.line.me/oauth2/v2.1/authorize?" + urlencode(params)
+    if provider == "facebook":
+        params = {
+            "client_id": os.getenv("FACEBOOK_CLIENT_ID"),
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": "email,public_profile",
+            "state": state,
+        }
+        return "https://www.facebook.com/v19.0/dialog/oauth?" + urlencode(params)
+    return None
+
+
+def exchange_oauth_profile(provider, code):
+    """ดึงโปรไฟล์ OAuth ผ่าน Authlib ถ้าติดตั้งแล้ว คืน dict มาตรฐาน {id,email,name,avatar,token}."""
+    try:
+        from authlib.integrations.requests_client import OAuth2Session
+    except Exception as exc:
+        raise RuntimeError("ยังไม่ได้ติดตั้ง Authlib: pip install Authlib") from exc
+
+    provider = provider.lower()
+    redirect_uri = url_for("social_callback", provider=provider, _external=True)
+    if provider == "google":
+        client = OAuth2Session(os.getenv("GOOGLE_CLIENT_ID"), os.getenv("GOOGLE_CLIENT_SECRET"), scope="openid email profile", redirect_uri=redirect_uri)
+        token = client.fetch_token("https://oauth2.googleapis.com/token", code=code)
+        profile = client.get("https://openidconnect.googleapis.com/v1/userinfo").json()
+        return {"id": profile.get("sub"), "email": profile.get("email"), "name": profile.get("name"), "avatar": profile.get("picture"), "token": token, "raw": profile}
+    if provider == "line":
+        client = OAuth2Session(os.getenv("LINE_CLIENT_ID"), os.getenv("LINE_CLIENT_SECRET"), scope="profile openid email", redirect_uri=redirect_uri)
+        token = client.fetch_token("https://api.line.me/oauth2/v2.1/token", code=code)
+        profile = client.get("https://api.line.me/v2/profile").json()
+        # LINE email จะอยู่ใน id_token ถ้า Channel เปิดสิทธิ์ email; เก็บได้เมื่อ Authlib decode ได้ในอนาคต
+        return {"id": profile.get("userId"), "email": None, "name": profile.get("displayName"), "avatar": profile.get("pictureUrl"), "token": token, "raw": profile}
+    if provider == "facebook":
+        client = OAuth2Session(os.getenv("FACEBOOK_CLIENT_ID"), os.getenv("FACEBOOK_CLIENT_SECRET"), redirect_uri=redirect_uri)
+        token = client.fetch_token("https://graph.facebook.com/v19.0/oauth/access_token", code=code)
+        profile = client.get("https://graph.facebook.com/me?fields=id,name,email,picture.type(large)").json()
+        avatar = (((profile.get("picture") or {}).get("data") or {}).get("url"))
+        return {"id": profile.get("id"), "email": profile.get("email"), "name": profile.get("name"), "avatar": avatar, "token": token, "raw": profile}
+    raise RuntimeError("ไม่รองรับ Provider นี้")
+
+
+def upsert_social_user(provider, profile):
+    from models import OAuthAccount, User
+    provider_user_id = str(profile.get("id") or "").strip()
+    email = (profile.get("email") or "").lower().strip() or None
+    name = (profile.get("name") or email or f"{provider.title()} User").strip()
+    avatar = profile.get("avatar")
+    if not provider_user_id:
+        raise RuntimeError("Provider ไม่ส่ง user id กลับมา")
+
+    account = OAuthAccount.query.filter_by(provider=provider, provider_user_id=provider_user_id).first()
+    if account:
+        user = account.user
+    else:
+        user = User.query.filter_by(email=email).first() if email else None
+        if not user:
+            user = User(name=name, email=email or f"{provider}_{provider_user_id}@social.local", role="organization_admin")
+            user.set_password(uuid.uuid4().hex)
+            db.session.add(user)
+            db.session.flush()
+        account = OAuthAccount(user_id=user.id, provider=provider, provider_user_id=provider_user_id)
+        db.session.add(account)
+
+    user.name = user.name or name
+    user.avatar_url = avatar or user.avatar_url
+    user.social_provider = provider
+    user.social_id = provider_user_id
+    user.last_login_at = datetime.utcnow()
+    account.email = email
+    account.name = name
+    account.avatar_url = avatar
+    token = profile.get("token") or {}
+    account.access_token = token.get("access_token") if isinstance(token, dict) else None
+    account.refresh_token = token.get("refresh_token") if isinstance(token, dict) else None
+    account.raw_profile = json.dumps(profile.get("raw") or {}, ensure_ascii=False)
+    db.session.commit()
+    return user
+
+
+# -----------------------------
+# Phase 13C: Payment helpers
+# -----------------------------
+def payment_gateway_enabled(gateway):
+    return gateway in (current_app_payment_gateways())
+
+
+def current_app_payment_gateways():
+    from flask import current_app
+    return current_app.config.get("PAYMENT_GATEWAYS", ["manual", "promptpay"])
+
+
+def crc16_ccitt(payload: str) -> str:
+    crc = 0xFFFF
+    for ch in payload.encode("utf-8"):
+        crc ^= ch << 8
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+            else:
+                crc = (crc << 1) & 0xFFFF
+    return f"{crc:04X}"
+
+
+def emv_field(tag, value):
+    value = str(value)
+    return f"{tag}{len(value):02d}{value}"
+
+
+def promptpay_target_to_aid(promptpay_id):
+    target = "".join(ch for ch in promptpay_id if ch.isdigit())
+    if len(target) == 10:  # mobile phone
+        target = "0066" + target[1:]
+        return emv_field("01", target)
+    if len(target) == 13:  # national id / tax id
+        return emv_field("02", target)
+    return emv_field("03", target)  # e-wallet/other
+
+
+def build_promptpay_payload(promptpay_id, amount):
+    """Build a Thai PromptPay EMVCo payload that banking apps can scan.
+
+    จุดสำคัญ: ช่อง CRC ต้องเป็น tag 63 ความยาว 04 เสมอ (`6304`)
+    แล้วค่อยคำนวณ CRC จาก payload ที่ลงท้ายด้วย `6304` ก่อนนำค่า CRC มาต่อท้าย
+    ถ้าใช้ `6300` ธนาคารหลายแอปจะเห็น QR แต่สแกนจ่ายไม่ได้
+    """
+    merchant = emv_field("00", "A000000677010111") + promptpay_target_to_aid(promptpay_id)
+    payload = ""
+    payload += emv_field("00", "01")      # Payload Format Indicator
+    payload += emv_field("01", "12")      # Dynamic QR
+    payload += emv_field("29", merchant)  # PromptPay Merchant Account Information
+    payload += emv_field("53", "764")     # THB
+    amount_value = float(amount or 0)
+    if amount_value > 0:
+        payload += emv_field("54", f"{amount_value:.2f}")
+    payload += emv_field("58", "TH")
+    payload_for_crc = payload + "6304"
+    return payload_for_crc + crc16_ccitt(payload_for_crc)
+
+
+def is_promptpay_payload_scanable(payload):
+    """Basic check for PromptPay payload CRC field. Returns False for old 6300 payloads."""
+    if not payload or not isinstance(payload, str):
+        return False
+    payload = payload.strip()
+    if len(payload) < 8 or not payload[-8:-4] == "6304":
+        return False
+    expected = crc16_ccitt(payload[:-4])
+    return payload[-4:].upper() == expected.upper()
+
+
+def ensure_promptpay_payload_for_transaction(txn):
+    """Rebuild old invalid PromptPay payloads already saved in the database."""
+    if not txn or txn.gateway != "promptpay":
+        return False
+    if is_promptpay_payload_scanable(txn.qr_payload):
+        return False
+    promptpay_id = current_app.config.get("PROMPTPAY_ID")
+    if not promptpay_id:
+        return False
+    amount = txn.invoice.amount if txn.invoice else txn.amount
+    txn.qr_payload = build_promptpay_payload(promptpay_id, amount)
+    txn.note = "PromptPay QR payload rebuilt with valid EMV CRC 6304"
+    db.session.commit()
+    return True
+
+
+def make_promptpay_qr_png(payload):
+    """Return PNG bytes for a PromptPay QR payload.
+
+    ถ้าเครื่องยังไม่ได้ติดตั้ง qrcode/Pillow จะคืน error กลับไปให้หน้าเว็บแสดงชัด ๆ
+    แทนการกลืน exception แล้วเหลือเป็นข้อความ payload ยาว ๆ อย่างเดียว
+    """
+    if not payload:
+        return None, "ไม่พบข้อมูล PromptPay payload"
+    try:
+        import qrcode
+        from qrcode.constants import ERROR_CORRECT_M
+    except Exception as exc:
+        return None, f"ยังไม่ได้ติดตั้งไลบรารี QR: {exc}"
+    try:
+        qr = qrcode.QRCode(
+            version=None,
+            error_correction=ERROR_CORRECT_M,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(payload)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buffer = BytesIO()
+        img.save(buffer, format="PNG")
+        return buffer.getvalue(), None
+    except Exception as exc:
+        return None, f"สร้าง QR ไม่สำเร็จ: {exc}"
+
+
+def make_promptpay_qr_data_uri(payload):
+    png_bytes, error = make_promptpay_qr_png(payload)
+    if not png_bytes:
+        return None, error
+    return "data:image/png;base64," + base64.b64encode(png_bytes).decode("ascii"), None
+
+
+def mark_invoice_paid(invoice, gateway="manual", reference=None):
+    invoice.status = "paid"
+    invoice.paid_at = invoice.paid_at or datetime.utcnow()
+    invoice.payment_method = gateway
+    if hasattr(invoice, "gateway_reference"):
+        invoice.gateway_reference = reference or invoice.gateway_reference
+    if invoice.subscription:
+        invoice.subscription.status = "active"
+        OrganizationSubscription.query.filter(
+            OrganizationSubscription.organization_id == invoice.organization_id,
+            OrganizationSubscription.id != invoice.subscription.id,
+            OrganizationSubscription.status == "active",
+        ).update({"status": "cancelled"})
+    db.session.commit()
+
+
+def create_stripe_checkout_url(invoice, provider_reference):
+    try:
+        import stripe
+    except Exception:
+        return None
+    secret_key = os.getenv("STRIPE_SECRET_KEY", "")
+    price_name = invoice.title or invoice.invoice_no
+    if not secret_key:
+        return None
+    stripe.api_key = secret_key
+    base = os.getenv("PAYMENT_RETURN_BASE_URL") or request.url_root.rstrip("/")
+    session_obj = stripe.checkout.Session.create(
+        mode="payment",
+        line_items=[{
+            "price_data": {
+                "currency": invoice.currency.lower(),
+                "product_data": {"name": price_name},
+                "unit_amount": int(round(float(invoice.amount) * 100)),
+            },
+            "quantity": 1,
+        }],
+        success_url=f"{base}{url_for('organizations_billing', org_id=invoice.organization_id)}?payment=success",
+        cancel_url=f"{base}{url_for('organizations_billing', org_id=invoice.organization_id)}?payment=cancel",
+        metadata={"invoice_id": str(invoice.id), "provider_reference": provider_reference},
+    )
+    return session_obj.url
+
+
 def save_upload(file):
     if not file or not file.filename:
         return None
@@ -330,198 +716,158 @@ def org_required(fn):
 
 
 
-def social_login_enabled(provider):
-    from flask import current_app
-    if provider == "google":
-        return bool(current_app.config.get("GOOGLE_CLIENT_ID") and current_app.config.get("GOOGLE_CLIENT_SECRET"))
-    if provider == "line":
-        return bool(current_app.config.get("LINE_CHANNEL_ID") and current_app.config.get("LINE_CHANNEL_SECRET"))
-    return False
+def line_channel_access_token():
+    """LINE Messaging API token สำหรับส่งข้อความไปหัวหน้าสีผ่าน Official Account"""
+    return (
+        os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+        or os.getenv("LINE_MESSAGING_CHANNEL_ACCESS_TOKEN")
+        or os.getenv("LINE_BOT_CHANNEL_ACCESS_TOKEN")
+        or ""
+    ).strip()
 
 
-def payment_gateway_enabled(gateway):
-    from flask import current_app
-    if gateway == "promptpay":
-        return bool(current_app.config.get("PROMPTPAY_ID"))
-    if gateway == "stripe":
-        return bool(current_app.config.get("STRIPE_SECRET_KEY"))
-    if gateway == "omise":
-        return bool(current_app.config.get("OMISE_SECRET_KEY") and current_app.config.get("OMISE_PUBLIC_KEY"))
-    if gateway == "manual":
-        return True
-    return False
+def is_line_message_ready():
+    return bool(line_channel_access_token())
 
 
-def app_base_url():
-    from flask import current_app
-    configured = current_app.config.get("PAYMENT_RETURN_BASE_URL")
-    if configured:
-        return configured.rstrip("/")
-    return request.url_root.rstrip("/")
-
-
-def _oauth_state(provider):
-    state = uuid.uuid4().hex
-    session[f"oauth_state_{provider}"] = state
-    return state
-
-
-def _check_oauth_state(provider):
-    state = request.args.get("state", "")
-    expected = session.pop(f"oauth_state_{provider}", None)
-    return bool(state and expected and state == expected)
-
-
-def find_or_create_social_user(provider, provider_user_id, email=None, name=None, avatar_url=None, email_verified=False, token_data=None):
-    from models import User, SocialAccount
-    email = (email or "").lower().strip() or None
-    account = SocialAccount.query.filter_by(provider=provider, provider_user_id=str(provider_user_id)).first()
-    if account:
-        user = account.user
-        account.email = email or account.email
-        account.display_name = name or account.display_name
-        account.avatar_url = avatar_url or account.avatar_url
-        if token_data:
-            account.access_token = token_data.get("access_token") or account.access_token
-            account.refresh_token = token_data.get("refresh_token") or account.refresh_token
-        user.last_login_at = datetime.utcnow()
-        if avatar_url and not user.avatar_url:
-            user.avatar_url = avatar_url
-        db.session.commit()
-        return user
-
-    user = User.query.filter_by(email=email).first() if email else None
-    if not user:
-        synthetic_email = email or f"{provider}_{provider_user_id}@social.local"
-        user = User(name=name or synthetic_email.split("@")[0], email=synthetic_email, role="organization_admin")
-        user.set_password(uuid.uuid4().hex)
-        user.avatar_url = avatar_url
-        user.email_verified = bool(email_verified)
-        user.last_login_at = datetime.utcnow()
-        db.session.add(user)
-        db.session.flush()
-    account = SocialAccount(
-        user_id=user.id,
-        provider=provider,
-        provider_user_id=str(provider_user_id),
-        email=email,
-        display_name=name,
-        avatar_url=avatar_url,
-        access_token=(token_data or {}).get("access_token"),
-        refresh_token=(token_data or {}).get("refresh_token"),
+def build_team_invite_message(team):
+    """ข้อความมาตรฐานสำหรับส่งให้หัวหน้าสี/หัวหน้าทีมเข้ากรอกข้อมูลเอง"""
+    entry_url = url_for("team_entry", _external=True)
+    event = team.event
+    return (
+        f"แจ้งหัวหน้าสี/หัวหน้าทีม\n\n"
+        f"งาน: {event.name}\n"
+        f"ทีม/สี: {team.name}\n"
+        f"รหัสกรอกข้อมูล: {team.access_code}\n\n"
+        f"ให้เข้ากรอกข้อมูลนักกีฬา/ผู้ควบคุมทีมที่ลิงก์นี้\n"
+        f"{entry_url}\n\n"
+        f"วิธีเข้าใช้งาน:\n"
+        f"1) กดลิงก์ด้านบน\n"
+        f"2) กรอกรหัสทีม/สี: {team.access_code}\n"
+        f"3) กดเข้าสู่หน้ากรอกข้อมูล\n"
+        f"4) เพิ่มรายชื่อนักกีฬา ผู้ฝึกสอน และตรวจสอบข้อมูลให้ถูกต้องก่อนบันทึก\n\n"
+        f"หมายเหตุ: รหัสนี้ใช้ได้เฉพาะทีม/สีของท่านเท่านั้น"
     )
-    db.session.add(account)
-    user.last_login_at = datetime.utcnow()
-    db.session.commit()
-    return user
 
 
-def mark_invoice_paid(invoice, payment_method="gateway", provider_reference=None):
-    invoice.status = "paid"
-    invoice.paid_at = invoice.paid_at or datetime.utcnow()
-    invoice.payment_method = payment_method
-    invoice.payment_gateway = payment_method
-    invoice.provider_reference = provider_reference or invoice.provider_reference
-    if invoice.subscription:
-        invoice.subscription.status = "active"
-        OrganizationSubscription = invoice.subscription.__class__
-        OrganizationSubscription.query.filter(
-            OrganizationSubscription.organization_id == invoice.organization_id,
-            OrganizationSubscription.id != invoice.subscription.id,
-            OrganizationSubscription.status == "active",
-        ).update({"status": "cancelled"})
-    db.session.commit()
+def send_line_push_message(line_user_id, message):
+    """ส่งข้อความ LINE ด้วย Messaging API push message.
 
-
-def create_promptpay_payload(promptpay_id, amount):
-    # ไม่สร้าง EMV QR เองเพื่อเลี่ยง error; ใช้ payload เป็นข้อมูลอ่านง่าย + endpoint QR ภายนอกใน template
-    return f"PROMPTPAY|{promptpay_id}|{amount:.2f}"
-
-
-def create_payment_transaction(invoice, gateway):
-    from models import PaymentTransaction
-    trx = PaymentTransaction(
-        invoice_id=invoice.id,
-        gateway=gateway,
-        amount=invoice.amount,
-        currency=invoice.currency,
-        status="pending",
+    line_user_id ต้องเป็น userId ของ LINE OA เช่น Uxxxxxxxx ไม่ใช่ LINE ID ที่ผู้ใช้ตั้งเอง.
+    """
+    token = line_channel_access_token()
+    if not token:
+        return False, "ยังไม่ได้ตั้งค่า LINE_CHANNEL_ACCESS_TOKEN ใน .env/Railway Variables"
+    line_user_id = (line_user_id or "").strip()
+    if not line_user_id:
+        return False, "ยังไม่ได้กรอก LINE userId ของหัวหน้าสี/ทีม"
+    payload = json.dumps({
+        "to": line_user_id,
+        "messages": [{"type": "text", "text": message}],
+    }).encode("utf-8")
+    req = Request(
+        "https://api.line.me/v2/bot/message/push",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
+        method="POST",
     )
-    db.session.add(trx)
-    db.session.flush()
-    return trx
-
-
-def create_stripe_checkout(invoice, trx):
-    from flask import current_app
-    secret = current_app.config.get("STRIPE_SECRET_KEY")
-    if not secret:
-        raise RuntimeError("ยังไม่ได้ตั้งค่า STRIPE_SECRET_KEY")
-    success_url = f"{app_base_url()}{url_for('payment_stripe_success')}?transaction_id={trx.id}"
-    cancel_url = f"{app_base_url()}{url_for('payment_cancel', transaction_id=trx.id)}"
-    data = {
-        "mode": "payment",
-        "success_url": success_url,
-        "cancel_url": cancel_url,
-        "line_items[0][price_data][currency]": invoice.currency.lower(),
-        "line_items[0][price_data][product_data][name]": invoice.title,
-        "line_items[0][price_data][unit_amount]": int(round(invoice.amount * 100)),
-        "line_items[0][quantity]": 1,
-        "metadata[invoice_id]": str(invoice.id),
-        "metadata[transaction_id]": str(trx.id),
-    }
-    resp = requests.post("https://api.stripe.com/v1/checkout/sessions", data=data, auth=(secret, ""), timeout=20)
-    if resp.status_code >= 400:
-        raise RuntimeError(resp.text[:500])
-    payload = resp.json()
-    trx.provider_reference = payload.get("id")
-    trx.checkout_url = payload.get("url")
-    trx.raw_response = json.dumps(payload, ensure_ascii=False)
-    invoice.payment_gateway = "stripe"
-    invoice.provider_reference = trx.provider_reference
-    invoice.checkout_url = trx.checkout_url
-    db.session.commit()
-    return trx.checkout_url
-
-
-def create_omise_charge(invoice, trx, token):
-    from flask import current_app
-    secret = current_app.config.get("OMISE_SECRET_KEY")
-    if not secret:
-        raise RuntimeError("ยังไม่ได้ตั้งค่า OMISE_SECRET_KEY")
-    return_uri = f"{app_base_url()}{url_for('payment_omise_return')}?transaction_id={trx.id}"
-    data = {
-        "amount": int(round(invoice.amount * 100)),
-        "currency": invoice.currency.lower(),
-        "card": token,
-        "description": invoice.title,
-        "return_uri": return_uri,
-        "metadata[invoice_id]": str(invoice.id),
-        "metadata[transaction_id]": str(trx.id),
-    }
-    resp = requests.post("https://api.omise.co/charges", data=data, auth=(secret, ""), timeout=20)
-    if resp.status_code >= 400:
-        raise RuntimeError(resp.text[:500])
-    payload = resp.json()
-    trx.provider_reference = payload.get("id")
-    trx.checkout_url = payload.get("authorize_uri")
-    trx.status = "paid" if payload.get("paid") else "pending"
-    trx.raw_response = json.dumps(payload, ensure_ascii=False)
-    invoice.payment_gateway = "omise"
-    invoice.provider_reference = trx.provider_reference
-    invoice.checkout_url = trx.checkout_url
-    db.session.commit()
-    if payload.get("paid"):
-        mark_invoice_paid(invoice, "omise", trx.provider_reference)
-    return trx.checkout_url
+    try:
+        with urlopen(req, timeout=12) as resp:
+            if 200 <= resp.status < 300:
+                return True, "ส่งข้อความ LINE สำเร็จ"
+            return False, f"LINE API ตอบกลับสถานะ {resp.status}"
+    except HTTPError as exc:
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+        return False, f"LINE API error {exc.code}: {body[:300]}"
+    except URLError as exc:
+        return False, f"เชื่อมต่อ LINE API ไม่สำเร็จ: {exc.reason}"
+    except Exception as exc:
+        return False, f"ส่งข้อความ LINE ไม่สำเร็จ: {exc}"
 
 
 def register_routes(app):
-    from models import Event, Organization, OrganizationMember, Team, TeamFile, TeamPerson, TeamProfile, User, Athlete, AthleteRegistration, Coach, SportCategory, Sport, SportDivision, RoundRobinCompetition, RoundRobinGroup, RoundRobinGroupTeam, RoundRobinMatch, RankingCompetition, RankingResult, ContestCompetition, ContestCriterion, ContestJudge, ContestScore, ContestResult, CertificateTemplate, CertificateRecipient, LiveBoardSetting, SubscriptionPlan, OrganizationSubscription, Invoice, SocialAccount, PaymentTransaction
+    from models import Event, Organization, OrganizationMember, Team, TeamFile, TeamPerson, TeamProfile, User, Athlete, AthleteRegistration, Coach, SportCategory, Sport, SportDivision, RoundRobinCompetition, RoundRobinGroup, RoundRobinGroupTeam, RoundRobinMatch, KnockoutCompetition, KnockoutMatch, RankingCompetition, RankingResult, ContestCompetition, ContestCriterion, ContestJudge, ContestScore, ContestResult, CertificateTemplate, CertificateRecipient, LiveBoardSetting, SubscriptionPlan, OrganizationSubscription, Invoice, OAuthAccount, PaymentTransaction
 
     @app.context_processor
     def inject_globals():
-        return {"current_year": datetime.now().year, "render_certificate_body": render_certificate_body, "get_current_plan": get_current_plan, "feature_allowed": feature_allowed, "social_login_enabled": social_login_enabled, "payment_gateway_enabled": payment_gateway_enabled}
+        def active_event_id():
+            """หา event ปัจจุบันให้ sidebar พาไป Teams/Sport Setup/Billing ได้ถูกหน้า"""
+            try:
+                args = request.view_args or {}
+                endpoint = request.endpoint or ""
+                if args.get("event_id"):
+                    return int(args.get("event_id"))
+                if args.get("team_id"):
+                    team = Team.query.get(args.get("team_id"))
+                    return team.event_id if team else None
+                if args.get("comp_id"):
+                    comp = None
+                    if endpoint.startswith("rr_") or "round_robin" in endpoint:
+                        comp = RoundRobinCompetition.query.get(args.get("comp_id"))
+                    elif endpoint.startswith("ranking"):
+                        comp = RankingCompetition.query.get(args.get("comp_id"))
+                    elif endpoint.startswith("knockout"):
+                        comp = KnockoutCompetition.query.get(args.get("comp_id"))
+                    elif endpoint.startswith("contest"):
+                        comp = ContestCompetition.query.get(args.get("comp_id"))
+                    return comp.event_id if comp else None
+                if args.get("match_id"):
+                    match = RoundRobinMatch.query.get(args.get("match_id")) or KnockoutMatch.query.get(args.get("match_id"))
+                    return match.competition.event_id if match and match.competition else None
+                if args.get("division_id"):
+                    div = SportDivision.query.get(args.get("division_id"))
+                    return div.sport.event_id if div and div.sport else None
+                if args.get("sport_id"):
+                    sport = Sport.query.get(args.get("sport_id"))
+                    return sport.event_id if sport else None
+                if args.get("category_id"):
+                    cat = SportCategory.query.get(args.get("category_id"))
+                    return cat.event_id if cat else None
+                # ถ้าไม่ได้อยู่ในหน้าที่มี event_id ให้ใช้ “งานล่าสุดที่เลือกไว้” ใน session
+                sid = session.get("active_event_id")
+                if sid:
+                    ev = Event.query.get(int(sid))
+                    if ev and can_access_org(ev.organization_id):
+                        return ev.id
+            except Exception:
+                return None
+            return None
+
+        def active_org_id():
+            try:
+                eid = active_event_id()
+                if eid:
+                    event = Event.query.get(eid)
+                    return event.organization_id if event else None
+                args = request.view_args or {}
+                if args.get("org_id"):
+                    return int(args.get("org_id"))
+                soid = session.get("active_org_id")
+                if soid and can_access_org(int(soid)):
+                    return int(soid)
+            except Exception:
+                return None
+            return None
+
+        return {
+            "current_year": datetime.now().year,
+            "render_certificate_body": render_certificate_body,
+            "get_current_plan": get_current_plan,
+            "feature_allowed": feature_allowed,
+            "oauth_providers": available_oauth_providers(),
+            "payment_gateways": current_app_payment_gateways(),
+            "line_message_ready": is_line_message_ready(),
+            "active_event_id": active_event_id,
+            "active_org_id": active_org_id,
+            "set_score_rows": set_score_rows,
+            "set_point_totals": set_point_totals,
+        }
 
     @app.route("/")
     def index():
@@ -559,15 +905,49 @@ def register_routes(app):
     @app.route("/login", methods=["GET", "POST"])
     def login():
         if request.method == "POST":
-            email = request.form.get("email", "").lower().strip()
+            identifier = request.form.get("email", "").lower().strip()
             password = request.form.get("password", "")
-            user = User.query.filter_by(email=email).first()
+            user = User.query.filter((User.email == identifier) | (User.username == identifier)).first()
             if not user or not user.check_password(password):
-                flash("อีเมลหรือรหัสผ่านไม่ถูกต้อง", "danger")
+                flash("ID/อีเมล หรือรหัสผ่านไม่ถูกต้อง", "danger")
                 return render_template("auth/login.html")
             login_user(user)
             return redirect(url_for("dashboard"))
         return render_template("auth/login.html")
+
+    @app.route("/auth/<provider>")
+    def social_login(provider):
+        provider = provider.lower()
+        if provider not in ("google", "line", "facebook"):
+            flash("ไม่รองรับ Social Login Provider นี้", "danger")
+            return redirect(url_for("login"))
+        if not oauth_configured(provider):
+            flash(f"ยังไม่ได้ตั้งค่า {provider.title()} Login ใน .env", "warning")
+            return redirect(url_for("login"))
+        state = uuid.uuid4().hex
+        session["oauth_state"] = state
+        session["oauth_provider"] = provider
+        return redirect(build_oauth_authorize_url(provider, state))
+
+    @app.route("/auth/<provider>/callback")
+    def social_callback(provider):
+        provider = provider.lower()
+        if request.args.get("state") != session.get("oauth_state") or provider != session.get("oauth_provider"):
+            flash("Social Login state ไม่ถูกต้อง กรุณาลองใหม่", "danger")
+            return redirect(url_for("login"))
+        code = request.args.get("code")
+        if not code:
+            flash("ไม่ได้รับรหัสยืนยันจาก Provider", "danger")
+            return redirect(url_for("login"))
+        try:
+            profile = exchange_oauth_profile(provider, code)
+            user = upsert_social_user(provider, profile)
+            login_user(user)
+            flash(f"เข้าสู่ระบบด้วย {provider.title()} สำเร็จ", "success")
+            return redirect(url_for("dashboard"))
+        except Exception as exc:
+            flash(f"Social Login ไม่สำเร็จ: {exc}", "danger")
+            return redirect(url_for("login"))
 
     @app.route("/logout")
     @login_required
@@ -575,112 +955,6 @@ def register_routes(app):
         logout_user()
         flash("ออกจากระบบแล้ว", "info")
         return redirect(url_for("login"))
-
-    @app.route("/auth/google")
-    def auth_google():
-        if not social_login_enabled("google"):
-            flash("ยังไม่ได้ตั้งค่า Google Login", "warning")
-            return redirect(url_for("login"))
-        from flask import current_app
-        redirect_uri = current_app.config.get("GOOGLE_REDIRECT_URI") or url_for("auth_google_callback", _external=True)
-        params = {
-            "client_id": current_app.config["GOOGLE_CLIENT_ID"],
-            "redirect_uri": redirect_uri,
-            "response_type": "code",
-            "scope": "openid email profile",
-            "access_type": "offline",
-            "prompt": "select_account",
-            "state": _oauth_state("google"),
-        }
-        query = "&".join(f"{k}={requests.utils.quote(str(v))}" for k, v in params.items())
-        return redirect(f"https://accounts.google.com/o/oauth2/v2/auth?{query}")
-
-    @app.route("/auth/google/callback")
-    def auth_google_callback():
-        if not _check_oauth_state("google"):
-            flash("Google Login state ไม่ถูกต้อง กรุณาลองใหม่", "danger")
-            return redirect(url_for("login"))
-        from flask import current_app
-        code = request.args.get("code")
-        if not code:
-            flash("ไม่ได้รับรหัสยืนยันจาก Google", "danger")
-            return redirect(url_for("login"))
-        redirect_uri = current_app.config.get("GOOGLE_REDIRECT_URI") or url_for("auth_google_callback", _external=True)
-        token_resp = requests.post("https://oauth2.googleapis.com/token", data={
-            "code": code,
-            "client_id": current_app.config["GOOGLE_CLIENT_ID"],
-            "client_secret": current_app.config["GOOGLE_CLIENT_SECRET"],
-            "redirect_uri": redirect_uri,
-            "grant_type": "authorization_code",
-        }, timeout=20)
-        if token_resp.status_code >= 400:
-            flash("เชื่อมต่อ Google Login ไม่สำเร็จ", "danger")
-            return redirect(url_for("login"))
-        token_data = token_resp.json()
-        userinfo_resp = requests.get("https://openidconnect.googleapis.com/v1/userinfo", headers={"Authorization": f"Bearer {token_data.get('access_token')}"}, timeout=20)
-        if userinfo_resp.status_code >= 400:
-            flash("อ่านข้อมูลบัญชี Google ไม่สำเร็จ", "danger")
-            return redirect(url_for("login"))
-        info = userinfo_resp.json()
-        user = find_or_create_social_user(
-            "google", info.get("sub"), info.get("email"), info.get("name"), info.get("picture"), info.get("email_verified"), token_data
-        )
-        login_user(user)
-        flash("เข้าสู่ระบบด้วย Google เรียบร้อย", "success")
-        return redirect(url_for("dashboard"))
-
-    @app.route("/auth/line")
-    def auth_line():
-        if not social_login_enabled("line"):
-            flash("ยังไม่ได้ตั้งค่า LINE Login", "warning")
-            return redirect(url_for("login"))
-        from flask import current_app
-        redirect_uri = current_app.config.get("LINE_REDIRECT_URI") or url_for("auth_line_callback", _external=True)
-        params = {
-            "response_type": "code",
-            "client_id": current_app.config["LINE_CHANNEL_ID"],
-            "redirect_uri": redirect_uri,
-            "state": _oauth_state("line"),
-            "scope": "profile openid email",
-        }
-        query = "&".join(f"{k}={requests.utils.quote(str(v))}" for k, v in params.items())
-        return redirect(f"https://access.line.me/oauth2/v2.1/authorize?{query}")
-
-    @app.route("/auth/line/callback")
-    def auth_line_callback():
-        if not _check_oauth_state("line"):
-            flash("LINE Login state ไม่ถูกต้อง กรุณาลองใหม่", "danger")
-            return redirect(url_for("login"))
-        from flask import current_app
-        code = request.args.get("code")
-        if not code:
-            flash("ไม่ได้รับรหัสยืนยันจาก LINE", "danger")
-            return redirect(url_for("login"))
-        redirect_uri = current_app.config.get("LINE_REDIRECT_URI") or url_for("auth_line_callback", _external=True)
-        token_resp = requests.post("https://api.line.me/oauth2/v2.1/token", data={
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": redirect_uri,
-            "client_id": current_app.config["LINE_CHANNEL_ID"],
-            "client_secret": current_app.config["LINE_CHANNEL_SECRET"],
-        }, headers={"Content-Type": "application/x-www-form-urlencoded"}, timeout=20)
-        if token_resp.status_code >= 400:
-            flash("เชื่อมต่อ LINE Login ไม่สำเร็จ", "danger")
-            return redirect(url_for("login"))
-        token_data = token_resp.json()
-        profile_resp = requests.get("https://api.line.me/v2/profile", headers={"Authorization": f"Bearer {token_data.get('access_token')}"}, timeout=20)
-        if profile_resp.status_code >= 400:
-            flash("อ่านข้อมูลบัญชี LINE ไม่สำเร็จ", "danger")
-            return redirect(url_for("login"))
-        profile = profile_resp.json()
-        email = None
-        # LINE จะส่ง email ใน id_token เฉพาะ Channel ที่เปิดสิทธิ์อีเมลไว้; ยังไม่ decode JWT เพื่อลด dependency
-        user = find_or_create_social_user(
-            "line", profile.get("userId"), email, profile.get("displayName"), profile.get("pictureUrl"), False, token_data
-        )
-        login_user(user)
-        flash("เข้าสู่ระบบด้วย LINE เรียบร้อย", "success")
-        return redirect(url_for("dashboard"))
 
     @app.route("/dashboard")
     @login_required
@@ -825,10 +1099,106 @@ def register_routes(app):
         if not can_access_org(event.organization_id):
             flash("คุณไม่มีสิทธิ์เข้าถึงงานนี้", "danger")
             return redirect(url_for("events"))
+        session["active_event_id"] = event.id
+        session["active_org_id"] = event.organization_id
         teams = Team.query.filter_by(event_id=event.id).order_by(Team.created_at.desc()).all()
         sport_count = Sport.query.filter_by(event_id=event.id).count()
         division_count = SportDivision.query.join(Sport).filter(Sport.event_id == event.id).count()
-        return render_template("events/detail.html", event=event, teams=teams, sport_count=sport_count, division_count=division_count)
+
+        competition_cards = []
+
+        def match_done(match):
+            status = getattr(match, "status", "")
+            if status in ("finished", "completed"):
+                return True
+            winner_team_id = getattr(match, "winner_team_id", None)
+            if winner_team_id:
+                return True
+            score_a = getattr(match, "score_a", None)
+            score_b = getattr(match, "score_b", None)
+            set_a = getattr(match, "set_a", None)
+            set_b = getattr(match, "set_b", None)
+            return (score_a is not None and score_b is not None) or (set_a is not None and set_b is not None)
+
+        rr_competitions = RoundRobinCompetition.query.filter_by(event_id=event.id).order_by(RoundRobinCompetition.created_at.desc()).all()
+        for comp in rr_competitions:
+            total_matches = len(comp.matches or [])
+            completed_matches = sum(1 for m in (comp.matches or []) if match_done(m))
+            group_count = len(comp.groups or [])
+            competition_cards.append({
+                "kind": "แบ่งกลุ่ม / พบกันหมด",
+                "badge": "Round Robin",
+                "icon": "bi-diagram-3",
+                "name": comp.name,
+                "status": comp.status,
+                "sport": comp.sport_division.label if comp.sport_division else "ไม่ระบุชนิดกีฬา",
+                "summary": f"{group_count or 1} กลุ่ม · แข่งแล้ว {completed_matches}/{total_matches} คู่",
+                "url": url_for("rr_detail", comp_id=comp.id),
+                "manage_label": "จัดการผล / ตารางกลุ่ม",
+                "created_at": comp.created_at,
+            })
+
+        knockout_competitions = KnockoutCompetition.query.filter_by(event_id=event.id).order_by(KnockoutCompetition.created_at.desc()).all()
+        for comp in knockout_competitions:
+            total_matches = len(comp.matches or [])
+            completed_matches = sum(1 for m in (comp.matches or []) if match_done(m))
+            competition_cards.append({
+                "kind": "น็อคเอาท์",
+                "badge": "Knockout",
+                "icon": "bi-trophy",
+                "name": comp.name,
+                "status": comp.status,
+                "sport": comp.sport_division.label if comp.sport_division else "ไม่ระบุชนิดกีฬา",
+                "summary": f"แข่งแล้ว {completed_matches}/{total_matches} คู่",
+                "url": url_for("knockout_detail", comp_id=comp.id),
+                "manage_label": "จัดการสาย / บันทึกผล",
+                "created_at": comp.created_at,
+            })
+
+        ranking_competitions = RankingCompetition.query.filter_by(event_id=event.id).order_by(RankingCompetition.created_at.desc()).all()
+        for comp in ranking_competitions:
+            result_count = len(comp.results or [])
+            competition_cards.append({
+                "kind": "จัดอันดับ / เก็บเวลา / เก็บคะแนน",
+                "badge": "Ranking",
+                "icon": "bi-list-ol",
+                "name": comp.name,
+                "status": comp.status,
+                "sport": comp.sport_division.label if comp.sport_division else "ไม่ระบุชนิดกีฬา",
+                "summary": f"บันทึกผลแล้ว {result_count} รายการ",
+                "url": url_for("ranking_detail", comp_id=comp.id),
+                "manage_label": "จัดอันดับ / บันทึกผล",
+                "created_at": comp.created_at,
+            })
+
+        contest_competitions = ContestCompetition.query.filter_by(event_id=event.id).order_by(ContestCompetition.created_at.desc()).all()
+        for comp in contest_competitions:
+            result_count = len(comp.results or [])
+            competition_cards.append({
+                "kind": "กิจกรรมประกวด",
+                "badge": "Contest",
+                "icon": "bi-star",
+                "name": comp.name,
+                "status": comp.status,
+                "sport": comp.sport_division.label if comp.sport_division else comp.activity_type or "กิจกรรมประกวด",
+                "summary": f"กรรมการ {len(comp.judges or [])} คน · สรุปผลแล้ว {result_count} ทีม",
+                "url": url_for("contest_detail", comp_id=comp.id),
+                "manage_label": "ให้คะแนน / สรุปผล",
+                "created_at": comp.created_at,
+            })
+
+        competition_cards.sort(key=lambda x: x.get("created_at") or datetime.min, reverse=True)
+        competition_count = len(competition_cards)
+
+        return render_template(
+            "events/detail.html",
+            event=event,
+            teams=teams,
+            sport_count=sport_count,
+            division_count=division_count,
+            competition_cards=competition_cards,
+            competition_count=competition_count,
+        )
 
     @app.route("/events/<int:event_id>/status", methods=["POST"])
     @login_required
@@ -874,6 +1244,8 @@ def register_routes(app):
                 flag=save_upload(request.files.get("flag")),
                 motto=request.form.get("motto", "").strip(),
                 access_code=(request.form.get("access_code", "").strip().upper() or generate_team_code(event.id)),
+                line_contact_name=request.form.get("line_contact_name", "").strip(),
+                line_user_id=request.form.get("line_user_id", "").strip(),
                 registration_open=bool(request.form.get("registration_open")),
             )
             if not team.name:
@@ -1017,6 +1389,8 @@ def register_routes(app):
                 t.color_name,
                 t.motto,
                 t.access_code,
+                t.line_contact_name or "",
+                t.line_user_id or "",
                 "เปิด" if t.registration_open else "ปิด",
                 p.director_name if p else "",
                 p.deputy_directors if p else "",
@@ -1029,7 +1403,7 @@ def register_routes(app):
 
         output = build_report_workbook(
             "รายงานทีม",
-            ["ทีม", "สี", "คำขวัญ", "รหัสทีม", "สถานะกรอก", "ผอ.", "รอง ผอ.", "ครูที่ปรึกษา", "ผู้ฝึกสอน", "ขบวน", "จำนวนสแตนด์", "เชียร์ลีดเดอร์"],
+            ["ทีม", "สี", "คำขวัญ", "รหัสทีม", "ชื่อหัวหน้าสี", "LINE userId", "สถานะกรอก", "ผอ.", "รอง ผอ.", "ครูที่ปรึกษา", "ผู้ฝึกสอน", "ขบวน", "จำนวนสแตนด์", "เชียร์ลีดเดอร์"],
             rows,
         )
         return send_file(output, as_attachment=True, download_name=f"teams_event_{event.id}.xlsx", mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -1073,6 +1447,8 @@ def register_routes(app):
             team.color_hex = request.form.get("color_hex", "#ef4444")
             team.motto = request.form.get("motto", "").strip()
             team.access_code = new_code
+            team.line_contact_name = request.form.get("line_contact_name", "").strip()
+            team.line_user_id = request.form.get("line_user_id", "").strip()
             team.registration_open = bool(request.form.get("registration_open"))
             uploaded_logo = save_upload(request.files.get("logo"))
             uploaded_flag = save_upload(request.files.get("flag"))
@@ -1087,6 +1463,59 @@ def register_routes(app):
             flash("บันทึกข้อมูลทีม/สีแล้ว", "success")
             return redirect(url_for("event_detail", event_id=event.id))
         return render_template("teams/form.html", event=event, team=team)
+
+    @app.route("/teams/<int:team_id>/line-invite", methods=["POST"])
+    @login_required
+    def team_line_invite(team_id):
+        team = Team.query.get_or_404(team_id)
+        if not can_access_org(team.event.organization_id):
+            flash("คุณไม่มีสิทธิ์ส่งข้อความทีมนี้", "danger")
+            return redirect(url_for("events"))
+        message = build_team_invite_message(team)
+        ok, msg = send_line_push_message(team.line_user_id, message)
+        if ok:
+            team.line_invite_sent_at = datetime.utcnow()
+            team.line_invite_error = None
+            flash(f"ส่งข้อความ LINE ให้ {team.name} แล้ว", "success")
+        else:
+            team.line_invite_error = msg
+            flash(msg, "danger")
+        db.session.commit()
+        return redirect(url_for("event_detail", event_id=team.event_id, _anchor="teams-section"))
+
+    @app.route("/events/<int:event_id>/teams/line-invite-all", methods=["POST"])
+    @login_required
+    def event_line_invite_all(event_id):
+        event = Event.query.get_or_404(event_id)
+        if not can_access_org(event.organization_id):
+            flash("คุณไม่มีสิทธิ์ส่งข้อความในงานนี้", "danger")
+            return redirect(url_for("events"))
+        teams = Team.query.filter_by(event_id=event.id).order_by(Team.name).all()
+        sent = 0
+        failed = 0
+        skipped = 0
+        errors = []
+        for team in teams:
+            if not team.line_user_id:
+                skipped += 1
+                continue
+            ok, msg = send_line_push_message(team.line_user_id, build_team_invite_message(team))
+            if ok:
+                sent += 1
+                team.line_invite_sent_at = datetime.utcnow()
+                team.line_invite_error = None
+            else:
+                failed += 1
+                team.line_invite_error = msg
+                errors.append(f"{team.name}: {msg}")
+        db.session.commit()
+        if sent:
+            flash(f"ส่ง LINE สำเร็จ {sent} ทีม/สี", "success")
+        if skipped:
+            flash(f"ข้าม {skipped} ทีม/สี เพราะยังไม่ได้กรอก LINE userId", "warning")
+        if failed:
+            flash(f"ส่งไม่สำเร็จ {failed} ทีม/สี: " + " | ".join(errors[:3]), "danger")
+        return redirect(url_for("event_detail", event_id=event.id, _anchor="teams-section"))
 
     @app.route("/teams/<int:team_id>/toggle", methods=["POST"])
     @login_required
@@ -1247,6 +1676,51 @@ def register_routes(app):
         return redirect(url_for("team_portal_profile", team_id=team.id))
 
 
+    @app.route("/teams")
+    @login_required
+    def teams_home():
+        """หน้าเลือกงานสำหรับจัดการ Teams/Colors เมื่อยังไม่มี active event"""
+        eid = session.get("active_event_id")
+        if eid:
+            ev = Event.query.get(int(eid))
+            if ev and can_access_org(ev.organization_id):
+                return redirect(url_for("event_detail", event_id=ev.id) + "#teams-section")
+        org_ids = user_org_ids()
+        query = Event.query
+        if org_ids is not None:
+            query = query.filter(Event.organization_id.in_(org_ids or [0]))
+        events_list = query.order_by(Event.created_at.desc()).all()
+        return render_template("events/select_context.html", mode="teams", events=events_list, title="เลือกงานเพื่อจัดการ Teams / Colors")
+
+    @app.route("/sports")
+    @login_required
+    def sport_setup_home():
+        """หน้าเลือกงานสำหรับ Sport Setup ไม่ให้กดแล้วค้างหน้า Settings"""
+        eid = session.get("active_event_id")
+        if eid:
+            ev = Event.query.get(int(eid))
+            if ev and can_access_org(ev.organization_id):
+                return redirect(url_for("event_sports", event_id=ev.id))
+        org_ids = user_org_ids()
+        query = Event.query
+        if org_ids is not None:
+            query = query.filter(Event.organization_id.in_(org_ids or [0]))
+        events_list = query.order_by(Event.created_at.desc()).all()
+        return render_template("events/select_context.html", mode="sports", events=events_list, title="เลือกงานเพื่อตั้งค่ากีฬา")
+
+    @app.route("/billing")
+    @login_required
+    def billing_home():
+        oid = session.get("active_org_id")
+        if oid and can_access_org(int(oid)):
+            return redirect(url_for("organizations_billing", org_id=int(oid)))
+        org_ids = user_org_ids()
+        query = Organization.query
+        if org_ids is not None:
+            query = query.filter(Organization.id.in_(org_ids or [0]))
+        orgs = query.order_by(Organization.created_at.desc()).all()
+        return render_template("orgs/select_billing.html", organizations=orgs)
+
     @app.route("/events/<int:event_id>/sports")
     @login_required
     def event_sports(event_id):
@@ -1254,10 +1728,400 @@ def register_routes(app):
         if not can_access_org(event.organization_id):
             flash("คุณไม่มีสิทธิ์เข้าถึงงานนี้", "danger")
             return redirect(url_for("events"))
+        session["active_event_id"] = event.id
+        session["active_org_id"] = event.organization_id
         categories = SportCategory.query.filter_by(event_id=event.id).order_by(SportCategory.sort_order, SportCategory.name).all()
         sports = Sport.query.filter_by(event_id=event.id).order_by(Sport.name).all()
         divisions = SportDivision.query.join(Sport).filter(Sport.event_id == event.id).order_by(Sport.name, SportDivision.class_name, SportDivision.gender).all()
         return render_template("sports/setup.html", event=event, categories=categories, sports=sports, divisions=divisions)
+
+    @app.route("/events/<int:event_id>/competitions/quick-new", methods=["GET", "POST"])
+    @login_required
+    def event_competition_wizard(event_id):
+        """สร้างรายการแข่งขันจากมุมผู้ใช้จริง
+        Flow: เลือกกีฬา -> เลือกทีมที่ส่งจริง -> เลือกระบบ/กติกา -> สร้างตาราง
+        ไม่บังคับให้ต้องสร้างชนิดกีฬา/รุ่นย่อยล่วงหน้า
+        """
+        event = Event.query.get_or_404(event_id)
+        if not can_access_org(event.organization_id):
+            flash("คุณไม่มีสิทธิ์สร้างรายการในงานนี้", "danger")
+            return redirect(url_for("events"))
+
+        session["active_event_id"] = event.id
+        session["active_org_id"] = event.organization_id
+
+        teams = Team.query.filter_by(event_id=event.id).order_by(Team.name).all()
+        sports = Sport.query.filter_by(event_id=event.id).order_by(Sport.name).all()
+        divisions = SportDivision.query.join(Sport).filter(Sport.event_id == event.id).order_by(Sport.name, SportDivision.class_name, SportDivision.gender).all()
+
+        sport_presets = [
+            {"name": "ฟุตบอล", "category": "กีฬาทีม", "format": "round_robin", "result": "score_only", "max_sets": 0, "points": 0, "win": 0, "note": "IFAB Laws of the Game 2025/26: บันทึกผลเป็นประตูได้-เสีย ระยะเวลาแข่งขันปรับตามระเบียบงานได้"},
+            {"name": "ฟุตซอล", "category": "กีฬาทีม", "format": "round_robin", "result": "score_only", "max_sets": 0, "points": 0, "win": 0, "note": "FIFA Futsal Laws of the Game 2025/26: ปกติ 2 ครึ่ง ครึ่งละ 20 นาที บันทึกผลเป็นประตูได้-เสีย"},
+            {"name": "วอลเลย์บอล", "category": "กีฬาทีม", "format": "round_robin", "result": "set_based", "max_sets": 5, "points": 25, "win": 3, "note": "FIVB Official Volleyball Rules 2025-2028: ชนะ 3 เซต; เซต 1-4 ถึง 25 แต้ม ต้องห่าง 2; เซตตัดสินถึง 15 แต้ม"},
+            {"name": "เซปักตะกร้อ", "category": "กีฬาทีม", "format": "round_robin", "result": "set_based", "max_sets": 3, "points": 15, "win": 2, "note": "ISTAF Law of the Game 2024: ชนะ 2 ใน 3 เซต; เซตละ 15 แต้ม; 14-14 เล่นถึง 17 แต้ม"},
+            {"name": "เปตอง", "category": "กีฬาเฉพาะทาง", "format": "knockout", "result": "score_only", "max_sets": 0, "points": 13, "win": 0, "note": "FIPJP Official Rules: เกมปกติถึง 13 คะแนน; รอบลีก/คัดเลือกอาจกำหนด 11 คะแนนตามระเบียบงาน"},
+            {"name": "แบดมินตัน", "category": "กีฬาเฉพาะทาง", "format": "knockout", "result": "set_based", "max_sets": 3, "points": 21, "win": 2, "note": "BWF Laws ปัจจุบัน: 2 ใน 3 เกม เกมละ 21 แต้ม; BWF อนุมัติ 3x15 เริ่ม 4 ม.ค. 2027"},
+            {"name": "เทเบิลเทนนิส", "category": "กีฬาเฉพาะทาง", "format": "knockout", "result": "set_based", "max_sets": 5, "points": 11, "win": 3, "note": "ITTF Laws: เกมละ 11 แต้ม ต้องชนะห่าง 2; ค่าเริ่มต้นระบบใช้ 3 ใน 5 เกม"},
+            {"name": "บาสเกตบอล", "category": "กีฬาทีม", "format": "round_robin", "result": "score_only", "max_sets": 0, "points": 0, "win": 0, "note": "FIBA ใช้การบันทึกคะแนนรวมของเกม; งานโรงเรียนปรับเวลาควอเตอร์ตามระเบียบงานได้"},
+            {"name": "กรีฑา", "category": "กรีฑา", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "World Athletics: ใช้ผลเวลา/ระยะ/อันดับ ไม่ใช่ระบบเซต"},
+            {"name": "วิ่ง 50 เมตร", "category": "กรีฑา", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา"},
+            {"name": "วิ่ง 100 เมตร", "category": "กรีฑา", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา"},
+            {"name": "วิ่งผลัด", "category": "กรีฑา", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา"},
+            {"name": "ชักเย่อ", "category": "กีฬาพื้นบ้าน", "format": "knockout", "result": "set_based", "max_sets": 3, "points": 0, "win": 2, "note": "กีฬาโรงเรียน/กีฬาพื้นบ้าน: ค่าเริ่มต้นชนะ 2 ใน 3 เที่ยว ปรับเองได้ตามระเบียบงาน"},
+            {"name": "วิ่งกระสอบ", "category": "กีฬาพื้นบ้าน", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา"},
+            {"name": "วิ่งสามขา", "category": "กีฬาพื้นบ้าน", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา"},
+            {"name": "ประกวดกองเชียร์", "category": "กิจกรรมประกวด", "format": "score_judging", "result": "contest", "max_sets": 0, "points": 0, "win": 0, "note": "ใช้กรรมการให้คะแนน ปรับเกณฑ์ได้ตามงาน"},
+        ]
+
+        def split_names(raw):
+            raw = (raw or "").strip()
+            for sep in ["\r", "\n", "，", "、", ";", "|", "\t"]:
+                raw = raw.replace(sep, ",")
+            names = []
+            for part in raw.split(","):
+                value = part.strip()
+                if value and value not in names:
+                    names.append(value)
+            return names
+
+        def preset_for(name):
+            needle = (name or "").strip().lower()
+            for item in sport_presets:
+                if item["name"].lower() == needle:
+                    return item
+            return None
+
+        def recommendation_for(sport_name, team_count):
+            name = (sport_name or "").lower()
+            if "กรีฑา" in name or "วิ่ง" in name:
+                return {"format": "ranking", "groups": 1, "advance": 0, "best": 0, "text": "กีฬาวัดเวลา/ระยะ แนะนำใช้ Ranking"}
+            if "ประกวด" in name or "กองเชียร์" in name:
+                return {"format": "score_judging", "groups": 1, "advance": 0, "best": 0, "text": "กิจกรรมประกวด แนะนำใช้กรรมการให้คะแนน"}
+            if team_count <= 1:
+                return {"format": "round_robin", "groups": 1, "advance": 0, "best": 0, "text": "ยังมีทีมไม่พอ ต้องเลือกอย่างน้อย 2 ทีม"}
+            if team_count == 2:
+                return {"format": "knockout", "groups": 1, "advance": 1, "best": 0, "text": "2 ทีม แนะนำแข่งชิงทันทีแบบ Knockout"}
+            if team_count <= 5:
+                return {"format": "round_robin", "groups": 1, "advance": 1, "best": 0, "text": f"{team_count} ทีม แนะนำพบกันหมด 1 กลุ่ม รู้ผลชัดและยุติธรรม"}
+            if team_count <= 8:
+                return {"format": "round_robin", "groups": 2, "advance": 2, "best": 0, "text": f"{team_count} ทีม แนะนำแบ่ง 2 กลุ่ม เข้ารอบกลุ่มละ 2 แล้วค่อยสร้าง Knockout"}
+            if team_count <= 12:
+                return {"format": "round_robin", "groups": 4, "advance": 2, "best": 0, "text": f"{team_count} ทีม แนะนำแบ่ง 4 กลุ่ม เอาที่ 1-2 เข้ารอบ หรือเลือกเอาเฉพาะที่ 1 ได้"}
+            return {"format": "round_robin", "groups": 4, "advance": 2, "best": 0, "text": f"{team_count} ทีมขึ้นไป แนะนำแบ่ง 4 กลุ่ม เข้ารอบกลุ่มละ 2"}
+
+        def get_or_create_sport(event, sport_name, preset, result_type, competition_format, max_sets, points_per_set, sets_to_win):
+            sport_name = (sport_name or "").strip()
+            if not sport_name:
+                return None
+            category_name = (preset or {}).get("category") or "กีฬาในงาน"
+            category = SportCategory.query.filter_by(event_id=event.id, name=category_name).first()
+            if not category:
+                category = SportCategory(event_id=event.id, name=category_name, description="สร้างจากหน้าสร้างรายการแข่งขันแบบง่าย")
+                db.session.add(category)
+                db.session.flush()
+            sport = Sport.query.filter_by(event_id=event.id, name=sport_name).first()
+            if not sport:
+                sport = Sport(
+                    event_id=event.id,
+                    category_id=category.id,
+                    name=sport_name,
+                    default_format=competition_format,
+                    result_type=result_type,
+                    max_sets=max_sets if result_type == "set_based" else 0,
+                    points_per_set=points_per_set if result_type == "set_based" else 0,
+                    sets_to_win=sets_to_win if result_type == "set_based" else 0,
+                    note=(preset or {}).get("note", ""),
+                    is_active=True,
+                )
+                db.session.add(sport)
+                db.session.flush()
+            elif not sport.category_id:
+                sport.category_id = category.id
+            return sport
+
+        def get_or_create_division(sport, class_name, gender, competition_format, result_type, max_sets, points_per_set, sets_to_win):
+            class_name = (class_name or "Open").strip() or "Open"
+            gender = (gender or "รวม").strip() or "รวม"
+            division = SportDivision.query.filter_by(sport_id=sport.id, class_name=class_name, gender=gender).first()
+            if not division:
+                division = SportDivision(
+                    sport_id=sport.id,
+                    class_name=class_name,
+                    gender=gender,
+                    competition_format=competition_format,
+                    result_type=result_type,
+                    max_sets=max_sets,
+                    points_per_set=points_per_set,
+                    sets_to_win=sets_to_win,
+                    is_active=True,
+                )
+                db.session.add(division)
+                db.session.flush()
+            else:
+                division.competition_format = competition_format
+                division.result_type = result_type
+                division.max_sets = max_sets
+                division.points_per_set = points_per_set
+                division.sets_to_win = sets_to_win
+                division.is_active = True
+            return division
+
+        def standard_tiebreakers(result_type):
+            if result_type == "set_based":
+                return "points,set_diff,sets_for,point_diff,head_to_head,wins,draw_lots"
+            return "points,goal_diff,goals_for,head_to_head,wins,draw_lots"
+
+        def create_competition_from_sport(sport, selected_teams, class_name, gender, competition_format, result_type, max_sets, points_per_set, sets_to_win, num_groups=None, advance_per_group=None, best_runnerup_count=None, name=None, bracket_pairing="adjacent"):
+            rec = recommendation_for(sport.name, len(selected_teams))
+            competition_format = competition_format or sport.default_format or rec["format"]
+            result_type = result_type or sport.result_type or "score_only"
+            division = get_or_create_division(sport, class_name, gender, competition_format, result_type, max_sets, points_per_set, sets_to_win)
+            comp_name = (name or f"{sport.name} {division.class_name} {division.gender}").strip()
+
+            if competition_format == "knockout":
+                comp = KnockoutCompetition(
+                    event_id=event.id,
+                    sport_division_id=division.id,
+                    name=comp_name,
+                    result_type=result_type,
+                    max_sets=max_sets,
+                    points_per_set=points_per_set,
+                    sets_to_win=sets_to_win,
+                    status="scheduled",
+                )
+                db.session.add(comp)
+                db.session.flush()
+                create_knockout_first_round(comp, selected_teams, pairing_mode=bracket_pairing or "adjacent")
+                return "knockout", comp
+
+            if competition_format == "round_robin":
+                comp = RoundRobinCompetition(
+                    event_id=event.id,
+                    sport_division_id=division.id,
+                    name=comp_name,
+                    num_groups=max(1, safe_int(num_groups) or rec["groups"]),
+                    win_points=3,
+                    draw_points=1,
+                    loss_points=0,
+                    advance_per_group=max(0, safe_int(advance_per_group) if advance_per_group not in (None, "") else rec["advance"]),
+                    best_runnerup_count=max(0, safe_int(best_runnerup_count) if best_runnerup_count not in (None, "") else rec["best"]),
+                    tiebreakers=standard_tiebreakers(result_type),
+                    status="scheduled",
+                )
+                db.session.add(comp)
+                db.session.flush()
+                create_rr_groups(comp)
+                assign_teams_auto(comp, [t.id for t in selected_teams])
+                generate_rr_matches(comp)
+                return "round_robin", comp
+
+            if competition_format == "score_judging":
+                comp = ContestCompetition(event_id=event.id, sport_division_id=division.id, name=comp_name, activity_type=sport.name, status="draft")
+                db.session.add(comp)
+                db.session.flush()
+                for idx, cname in enumerate(["ความพร้อม", "ทักษะ/คุณภาพ", "ความคิดสร้างสรรค์", "ความพร้อมเพรียง", "ภาพรวม"], start=1):
+                    db.session.add(ContestCriterion(competition_id=comp.id, name=cname, max_score=100, sort_order=idx))
+                db.session.add(ContestJudge(competition_id=comp.id, name="กรรมการ 1"))
+                return "score_judging", comp
+
+            comp = RankingCompetition(event_id=event.id, sport_division_id=division.id, name=comp_name, result_mode="rank", status="draft")
+            db.session.add(comp)
+            return "ranking", comp
+
+        if request.method == "POST" and request.form.get("mode") == "bulk_from_library":
+            selected_sport_ids = [safe_int(x) for x in request.form.getlist("selected_sports") if safe_int(x)]
+            if not selected_sport_ids:
+                flash("กรุณาเลือกชนิดกีฬาที่งานนี้จะจัดอย่างน้อย 1 รายการ", "warning")
+                return redirect(url_for("event_competition_wizard", event_id=event.id))
+
+            all_team_ids = [t.id for t in teams]
+            created = []
+            skipped = []
+            first_redirect = None
+
+            for sport_id in selected_sport_ids:
+                sport = Sport.query.filter_by(id=sport_id, event_id=event.id).first()
+                if not sport:
+                    continue
+                team_ids = [safe_int(x) for x in request.form.getlist(f"team_ids_{sport_id}") if safe_int(x)]
+                if not team_ids and request.form.get(f"use_all_teams_{sport_id}") == "1":
+                    team_ids = all_team_ids
+                selected_teams = Team.query.filter(Team.event_id == event.id, Team.id.in_(team_ids)).order_by(Team.name).all() if team_ids else []
+
+                competition_format = request.form.get(f"competition_format_{sport_id}") or sport.default_format or recommendation_for(sport.name, len(selected_teams))["format"]
+                result_type = request.form.get(f"result_type_{sport_id}") or sport.result_type or "score_only"
+                if len(selected_teams) < 2 and competition_format not in ("ranking", "score_judging"):
+                    skipped.append(f"{sport.name} (ทีมไม่พอ)")
+                    continue
+
+                if result_type == "set_based":
+                    max_sets = safe_int(request.form.get(f"max_sets_{sport_id}")) or sport.max_sets or 3
+                    points_per_set = safe_int(request.form.get(f"points_per_set_{sport_id}")) or sport.points_per_set or 21
+                    sets_to_win = safe_int(request.form.get(f"sets_to_win_{sport_id}")) or sport.sets_to_win or ((max_sets // 2) + 1)
+                else:
+                    max_sets = 0
+                    points_per_set = 0
+                    sets_to_win = 0
+
+                class_name = request.form.get(f"class_name_{sport_id}") or "Open"
+                gender = request.form.get(f"gender_{sport_id}") or "รวม"
+                name = request.form.get(f"name_{sport_id}") or None
+                kind, comp = create_competition_from_sport(
+                    sport=sport,
+                    selected_teams=selected_teams,
+                    class_name=class_name,
+                    gender=gender,
+                    competition_format=competition_format,
+                    result_type=result_type,
+                    max_sets=max_sets,
+                    points_per_set=points_per_set,
+                    sets_to_win=sets_to_win,
+                    num_groups=request.form.get(f"num_groups_{sport_id}"),
+                    advance_per_group=request.form.get(f"advance_per_group_{sport_id}"),
+                    best_runnerup_count=request.form.get(f"best_runnerup_count_{sport_id}"),
+                    name=name,
+                    bracket_pairing=request.form.get(f"bracket_pairing_{sport_id}") or "adjacent",
+                )
+                created.append(f"{sport.name} ({len(selected_teams)} ทีม)")
+                if first_redirect is None:
+                    first_redirect = (kind, comp)
+
+            db.session.commit()
+            if created:
+                flash("สร้างการแข่งขันแล้ว: " + ", ".join(created), "success")
+            if skipped:
+                flash("ข้ามรายการ: " + ", ".join(skipped), "warning")
+            if first_redirect and len(created) == 1:
+                kind, comp = first_redirect
+                if kind == "knockout":
+                    return redirect(url_for("knockout_detail", comp_id=comp.id))
+                if kind == "round_robin":
+                    return redirect(url_for("rr_detail", comp_id=comp.id))
+                if kind == "score_judging":
+                    return redirect(url_for("contest_detail", comp_id=comp.id))
+                return redirect(url_for("ranking_detail", comp_id=comp.id))
+            return redirect(url_for("event_detail", event_id=event.id))
+
+        if request.method == "POST":
+            selected_team_ids = [int(x) for x in request.form.getlist("team_ids") if str(x).isdigit()]
+            selected_teams = Team.query.filter(Team.event_id == event.id, Team.id.in_(selected_team_ids)).order_by(Team.name).all() if selected_team_ids else []
+            if len(selected_teams) < 2 and request.form.get("competition_format") not in ("ranking", "score_judging"):
+                flash("กรุณาเลือกทีมที่ส่งแข่งขันจริงอย่างน้อย 2 ทีม", "danger")
+                return redirect(url_for("event_competition_wizard", event_id=event.id))
+
+            sport_id = safe_int_or_none(request.form.get("sport_id"))
+            sport = Sport.query.filter_by(id=sport_id, event_id=event.id).first() if sport_id else None
+            sport_name = (request.form.get("sport_name") or (sport.name if sport else "")).strip()
+            preset = preset_for(sport_name) or {}
+            class_name = (request.form.get("class_name") or "Open").strip()
+            gender = (request.form.get("gender") or "ผสม").strip()
+            competition_format = request.form.get("competition_format") or recommendation_for(sport_name, len(selected_teams))["format"]
+            result_type = request.form.get("result_type") or (sport.result_type if sport else preset.get("result", "score_only"))
+
+            if result_type == "set_based":
+                max_sets = safe_int(request.form.get("max_sets")) or preset.get("max_sets") or 3
+                points_per_set = safe_int(request.form.get("points_per_set")) or preset.get("points") or 21
+                sets_to_win = safe_int(request.form.get("sets_to_win")) or preset.get("win") or ((max_sets // 2) + 1)
+            else:
+                max_sets = 0
+                points_per_set = 0
+                sets_to_win = 0
+
+            if not sport:
+                sport = get_or_create_sport(event, sport_name, preset, result_type, competition_format, max_sets, points_per_set, sets_to_win)
+            if not sport:
+                flash("กรุณาเลือกหรือกรอกชื่อกีฬา", "danger")
+                return redirect(url_for("event_competition_wizard", event_id=event.id))
+
+            division = SportDivision.query.filter_by(sport_id=sport.id, class_name=class_name, gender=gender).first()
+            if not division:
+                division = SportDivision(
+                    sport_id=sport.id,
+                    class_name=class_name,
+                    gender=gender,
+                    competition_format=competition_format,
+                    result_type=result_type,
+                    max_sets=max_sets,
+                    points_per_set=points_per_set,
+                    sets_to_win=sets_to_win,
+                    is_active=True,
+                )
+                db.session.add(division)
+                db.session.flush()
+            else:
+                division.competition_format = competition_format
+                division.result_type = result_type
+                division.max_sets = max_sets
+                division.points_per_set = points_per_set
+                division.sets_to_win = sets_to_win
+                division.is_active = True
+
+            default_name = f"{sport.name} {class_name} {gender}".strip()
+            comp_name = (request.form.get("name") or default_name).strip()
+
+            if competition_format == "knockout":
+                comp = KnockoutCompetition(
+                    event_id=event.id,
+                    sport_division_id=division.id,
+                    name=comp_name,
+                    result_type=result_type,
+                    max_sets=max_sets,
+                    points_per_set=points_per_set,
+                    sets_to_win=sets_to_win,
+                    status="scheduled",
+                )
+                db.session.add(comp)
+                db.session.flush()
+                create_knockout_first_round(comp, selected_teams, pairing_mode=request.form.get("bracket_pairing") or "adjacent")
+                db.session.commit()
+                flash(f"สร้าง {comp.name} แบบ Knockout จากทีมที่เลือก {len(selected_teams)} ทีมแล้ว", "success")
+                return redirect(url_for("knockout_detail", comp_id=comp.id))
+
+            if competition_format == "round_robin":
+                rec = recommendation_for(sport.name, len(selected_teams))
+                selected_tiebreakers = ",".join(request.form.getlist("tiebreakers"))
+                if not selected_tiebreakers:
+                    selected_tiebreakers = "points,set_diff,sets_for,point_diff,head_to_head,wins,draw_lots" if result_type == "set_based" else "points,goal_diff,goals_for,head_to_head,wins,draw_lots"
+                comp = RoundRobinCompetition(
+                    event_id=event.id,
+                    sport_division_id=division.id,
+                    name=comp_name,
+                    num_groups=max(1, safe_int(request.form.get("num_groups")) or rec["groups"]),
+                    win_points=safe_int(request.form.get("win_points")) if request.form.get("win_points") not in (None, "") else 3,
+                    draw_points=safe_int(request.form.get("draw_points")) if request.form.get("draw_points") not in (None, "") else 1,
+                    loss_points=safe_int(request.form.get("loss_points")) if request.form.get("loss_points") not in (None, "") else 0,
+                    advance_per_group=max(0, safe_int(request.form.get("advance_per_group")) if request.form.get("advance_per_group") not in (None, "") else rec["advance"]),
+                    best_runnerup_count=max(0, safe_int(request.form.get("best_runnerup_count")) if request.form.get("best_runnerup_count") not in (None, "") else rec["best"]),
+                    tiebreakers=selected_tiebreakers,
+                    status="scheduled",
+                )
+                db.session.add(comp)
+                db.session.flush()
+                create_rr_groups(comp)
+                assign_teams_auto(comp, [t.id for t in selected_teams])
+                generate_rr_matches(comp)
+                db.session.commit()
+                flash(f"สร้าง {comp.name} แบบพบกันหมด/แบ่งกลุ่ม จากทีมที่เลือก {len(selected_teams)} ทีมแล้ว", "success")
+                return redirect(url_for("rr_detail", comp_id=comp.id))
+
+            if competition_format == "score_judging":
+                comp = ContestCompetition(event_id=event.id, sport_division_id=division.id, name=comp_name, activity_type=sport.name, status="draft")
+                db.session.add(comp)
+                db.session.flush()
+                for idx, cname in enumerate(["ความพร้อม", "ทักษะ/คุณภาพ", "ความคิดสร้างสรรค์", "ความพร้อมเพรียง", "ภาพรวม"], start=1):
+                    db.session.add(ContestCriterion(competition_id=comp.id, name=cname, max_score=100, sort_order=idx))
+                db.session.add(ContestJudge(competition_id=comp.id, name="กรรมการ 1"))
+                db.session.commit()
+                flash("สร้างรายการกรรมการให้คะแนนแล้ว", "success")
+                return redirect(url_for("contest_detail", comp_id=comp.id))
+
+            comp = RankingCompetition(event_id=event.id, sport_division_id=division.id, name=comp_name, result_mode=request.form.get("result_mode", "rank"), status="draft")
+            db.session.add(comp)
+            db.session.commit()
+            flash("สร้างรายการ Ranking แล้ว", "success")
+            return redirect(url_for("ranking_detail", comp_id=comp.id))
+
+        return render_template("sports/competition_wizard.html", event=event, teams=teams, sports=sports, divisions=divisions, sport_presets=sport_presets)
 
     @app.route("/events/<int:event_id>/sports/categories/add", methods=["POST"])
     @login_required
@@ -1289,6 +2153,28 @@ def register_routes(app):
         db.session.commit()
         flash("ลบหมวดกีฬาแล้ว", "info")
         return redirect(url_for("event_sports", event_id=event_id))
+
+    @app.route("/sports/categories/<int:category_id>/update", methods=["POST"])
+    @login_required
+    def sport_category_update(category_id):
+        category = SportCategory.query.get_or_404(category_id)
+        if not can_access_org(category.event.organization_id):
+            flash("คุณไม่มีสิทธิ์แก้ไขหมวดนี้", "danger")
+            return redirect(url_for("events"))
+        name = request.form.get("name", "").strip()
+        if not name:
+            flash("กรุณากรอกชื่อหมวดกีฬา", "danger")
+        else:
+            duplicate = SportCategory.query.filter(SportCategory.event_id == category.event_id, SportCategory.name == name, SportCategory.id != category.id).first()
+            if duplicate:
+                flash("หมวดกีฬานี้มีแล้ว", "warning")
+            else:
+                category.name = name
+                category.description = request.form.get("description", "").strip()
+                category.sort_order = safe_int(request.form.get("sort_order"))
+                db.session.commit()
+                flash("แก้ไขหมวดกีฬาแล้ว", "success")
+        return redirect(url_for("event_sports", event_id=category.event_id) + "#sport-setup-categories")
 
     @app.route("/events/<int:event_id>/sports/add", methods=["POST"])
     @login_required
@@ -1322,6 +2208,114 @@ def register_routes(app):
             flash("เพิ่มชนิดกีฬาแล้ว", "success")
         return redirect(url_for("event_sports", event_id=event.id))
 
+    @app.route("/events/<int:event_id>/sports/quick-add", methods=["POST"])
+    @login_required
+    def sport_quick_add(event_id):
+        """เพิ่มกีฬาเข้าอีเว้นท์แบบผู้ใช้ทั่วไป: จบในฟอร์มเดียว
+        - เลือก/สร้างหมวดกีฬา
+        - เลือกกีฬาเดิมหรือสร้างชนิดกีฬาใหม่
+        - สร้างรุ่นแข่งขัน + เพศหลายรายการพร้อมกัน
+        """
+        event = Event.query.get_or_404(event_id)
+        if not can_access_org(event.organization_id):
+            flash("คุณไม่มีสิทธิ์จัดการกีฬาในงานนี้", "danger")
+            return redirect(url_for("events"))
+
+        def split_lines(raw):
+            raw = (raw or "").strip()
+            for sep in ["\r", "\n", "，", "、", ";", "|", "\t"]:
+                raw = raw.replace(sep, ",")
+            items = []
+            for part in raw.split(","):
+                value = part.strip()
+                if value and value not in items:
+                    items.append(value)
+            return items
+
+        sport_id = safe_int_or_none(request.form.get("sport_id"))
+        sport = Sport.query.filter_by(id=sport_id, event_id=event.id).first() if sport_id else None
+        sport_name = (request.form.get("sport_name") or "").strip()
+        category_name = (request.form.get("category_name") or request.form.get("category_preset") or "").strip()
+        category_id = safe_int_or_none(request.form.get("category_id"))
+        category = SportCategory.query.filter_by(id=category_id, event_id=event.id).first() if category_id else None
+
+        if not category and category_name:
+            category = SportCategory.query.filter_by(event_id=event.id, name=category_name).first()
+            if not category:
+                category = SportCategory(event_id=event.id, name=category_name, description="สร้างจากฟอร์มเพิ่มกีฬาแบบง่าย")
+                db.session.add(category)
+                db.session.flush()
+
+        competition_format = request.form.get("competition_format") or (sport.default_format if sport else "ranking")
+        result_type = request.form.get("result_type") or (sport.result_type if sport else "score_only")
+        if result_type == "set_based":
+            max_sets = safe_int(request.form.get("max_sets")) or (sport.max_sets if sport else 0) or 3
+            points_per_set = safe_int(request.form.get("points_per_set")) or (sport.points_per_set if sport else 0) or 21
+            sets_to_win = safe_int(request.form.get("sets_to_win")) or (sport.sets_to_win if sport else 0) or ((max_sets // 2) + 1)
+        else:
+            max_sets = 0
+            points_per_set = 0
+            sets_to_win = 0
+        max_athletes_per_team = safe_int_or_none(request.form.get("max_athletes_per_team"))
+        note = (request.form.get("note") or "").strip()
+
+        if not sport:
+            if not sport_name:
+                flash("กรุณาเลือกกีฬาเดิม หรือกรอกชื่อชนิดกีฬาใหม่", "danger")
+                return redirect(url_for("event_sports", event_id=event.id) + "#sport-wizard")
+            sport = Sport.query.filter_by(event_id=event.id, name=sport_name).first()
+            if not sport:
+                sport = Sport(
+                    event_id=event.id,
+                    category_id=category.id if category else None,
+                    name=sport_name,
+                    default_format=competition_format,
+                    result_type=result_type,
+                    max_sets=max_sets,
+                    points_per_set=points_per_set,
+                    sets_to_win=sets_to_win,
+                    note=note,
+                    is_active=True,
+                )
+                db.session.add(sport)
+                db.session.flush()
+            elif category and not sport.category_id:
+                sport.category_id = category.id
+        elif category:
+            sport.category_id = category.id
+
+        class_names = split_lines(request.form.get("class_name")) or ["Open"]
+        genders = request.form.getlist("gender") or ["ผสม"]
+
+        added = 0
+        skipped = 0
+        for class_name in class_names:
+            for gender in genders:
+                exists = SportDivision.query.filter_by(sport_id=sport.id, class_name=class_name, gender=gender).first()
+                if exists:
+                    skipped += 1
+                    continue
+                db.session.add(SportDivision(
+                    sport_id=sport.id,
+                    class_name=class_name,
+                    gender=gender,
+                    competition_format=competition_format,
+                    result_type=result_type,
+                    max_sets=max_sets or sport.max_sets or 0,
+                    points_per_set=points_per_set or sport.points_per_set or 0,
+                    sets_to_win=sets_to_win or sport.sets_to_win or 0,
+                    max_athletes_per_team=max_athletes_per_team,
+                    is_active=True,
+                ))
+                added += 1
+
+        db.session.commit()
+        if added:
+            flash(f"เพิ่ม {sport.name} เข้าอีเว้นท์แล้ว {added} รายการ" + (f" · ข้ามรายการซ้ำ {skipped}" if skipped else ""), "success")
+        else:
+            flash(f"ยังไม่มีรายการใหม่สำหรับ {sport.name} เพราะรายการที่เลือกมีอยู่แล้ว", "warning")
+        return redirect(url_for("event_sports", event_id=event.id) + "#sport-wizard")
+
     @app.route("/sports/<int:sport_id>/delete", methods=["POST"])
     @login_required
     def sport_delete(sport_id):
@@ -1334,6 +2328,35 @@ def register_routes(app):
         db.session.commit()
         flash("ลบชนิดกีฬาแล้ว", "info")
         return redirect(url_for("event_sports", event_id=event_id))
+
+    @app.route("/sports/<int:sport_id>/update", methods=["POST"])
+    @login_required
+    def sport_update(sport_id):
+        sport = Sport.query.get_or_404(sport_id)
+        if not can_access_org(sport.event.organization_id):
+            flash("คุณไม่มีสิทธิ์แก้ไขกีฬานี้", "danger")
+            return redirect(url_for("events"))
+        name = request.form.get("name", "").strip()
+        if not name:
+            flash("กรุณากรอกชื่อชนิดกีฬา", "danger")
+        else:
+            duplicate = Sport.query.filter(Sport.event_id == sport.event_id, Sport.name == name, Sport.id != sport.id).first()
+            if duplicate:
+                flash("ชนิดกีฬานี้มีแล้ว", "warning")
+            else:
+                result_type = request.form.get("result_type", "score_only")
+                sport.name = name
+                sport.category_id = safe_int_or_none(request.form.get("category_id"))
+                sport.default_format = request.form.get("default_format", "ranking")
+                sport.result_type = result_type
+                sport.max_sets = safe_int(request.form.get("max_sets")) if result_type == "set_based" else 0
+                sport.points_per_set = safe_int(request.form.get("points_per_set")) if result_type == "set_based" else 0
+                sport.sets_to_win = safe_int(request.form.get("sets_to_win")) if result_type == "set_based" else 0
+                sport.note = request.form.get("note", "").strip()
+                sport.is_active = bool(request.form.get("is_active"))
+                db.session.commit()
+                flash("แก้ไขชนิดกีฬาและรูปแบบบันทึกผลแล้ว", "success")
+        return redirect(url_for("event_sports", event_id=sport.event_id) + f"#sport-{sport.id}")
 
     @app.route("/events/<int:event_id>/sports/divisions/add", methods=["POST"])
     @login_required
@@ -1387,6 +2410,44 @@ def register_routes(app):
         flash("ลบรายการย่อยแล้ว", "info")
         return redirect(url_for("event_sports", event_id=event.id))
 
+    @app.route("/sports/divisions/<int:division_id>/update", methods=["POST"])
+    @login_required
+    def sport_division_update(division_id):
+        division = SportDivision.query.get_or_404(division_id)
+        event = division.sport.event
+        if not can_access_org(event.organization_id):
+            flash("คุณไม่มีสิทธิ์แก้ไขรายการนี้", "danger")
+            return redirect(url_for("events"))
+        sport = Sport.query.filter_by(id=safe_int_or_none(request.form.get("sport_id")), event_id=event.id).first() or division.sport
+        class_name = request.form.get("class_name", "").strip()
+        gender = request.form.get("gender", division.gender).strip() or division.gender
+        if not class_name:
+            flash("กรุณากรอกรุ่นแข่งขัน", "danger")
+        else:
+            duplicate = SportDivision.query.filter(
+                SportDivision.sport_id == sport.id,
+                SportDivision.class_name == class_name,
+                SportDivision.gender == gender,
+                SportDivision.id != division.id,
+            ).first()
+            if duplicate:
+                flash("รายการย่อยนี้มีแล้ว", "warning")
+            else:
+                result_type = request.form.get("result_type") or sport.result_type or "score_only"
+                division.sport_id = sport.id
+                division.class_name = class_name
+                division.gender = gender
+                division.competition_format = request.form.get("competition_format") or sport.default_format or "ranking"
+                division.result_type = result_type
+                division.max_sets = safe_int(request.form.get("max_sets")) if result_type == "set_based" else 0
+                division.points_per_set = safe_int(request.form.get("points_per_set")) if result_type == "set_based" else 0
+                division.sets_to_win = safe_int(request.form.get("sets_to_win")) if result_type == "set_based" else 0
+                division.max_athletes_per_team = safe_int_or_none(request.form.get("max_athletes_per_team"))
+                division.is_active = bool(request.form.get("is_active"))
+                db.session.commit()
+                flash("แก้ไขรายการย่อยและวิธีบันทึกผลแล้ว", "success")
+        return redirect(url_for("event_sports", event_id=event.id) + f"#division-{division.id}")
+
     @app.route("/events/<int:event_id>/sports/seed-defaults", methods=["POST"])
     @login_required
     def sport_seed_defaults(event_id):
@@ -1395,8 +2456,8 @@ def register_routes(app):
             flash("คุณไม่มีสิทธิ์จัดการกีฬาในงานนี้", "danger")
             return redirect(url_for("events"))
         seed_default_sports(event)
-        flash("สร้างชุดกีฬาเริ่มต้นแล้ว", "success")
-        return redirect(url_for("event_sports", event_id=event.id))
+        flash("ล้างคลังกีฬาเดิมและสร้างชุดมาตรฐานล่าสุดแล้ว ขั้นต่อไปเลือกกีฬาที่งานนี้จัดและสร้างการแข่งขันจริง", "success")
+        return redirect(url_for("event_competition_wizard", event_id=event.id))
 
 
     @app.route("/events/<int:event_id>/round-robin")
@@ -1563,6 +2624,7 @@ def register_routes(app):
                 elif b > a:
                     sets_b += 1
             match.set_scores = json.dumps(set_scores, ensure_ascii=False) if set_scores else None
+            match.score_history = normalize_score_history_payload(request.form.get("score_history"))
             match.set_a = sets_a if set_scores else None
             match.set_b = sets_b if set_scores else None
             # สำหรับ Set Based: score_a/score_b = ผลเซต, ส่วนแต้มรวมเก็บใน set_scores/point_diff
@@ -1575,7 +2637,8 @@ def register_routes(app):
             db.session.commit()
             flash("บันทึกคะแนนรายเซตแล้ว", "success")
             return redirect(url_for("rr_detail", comp_id=comp.id) + f"#match-{match.id}")
-        return render_template("round_robin/match_result.html", match=match, comp=comp, cfg=cfg, current_sets=current_sets)
+        group_standings = calculate_rr_standings(comp).get(match.group_id, [])
+        return render_template("round_robin/match_result.html", match=match, comp=comp, cfg=cfg, current_sets=current_sets, score_history=parse_score_history(match), group_standings=group_standings)
 
     @app.route("/round-robin/<int:comp_id>/delete", methods=["POST"])
     @login_required
@@ -1589,6 +2652,170 @@ def register_routes(app):
         db.session.commit()
         flash("ลบรายการ Round Robin แล้ว", "info")
         return redirect(url_for("event_round_robin", event_id=event_id))
+
+
+    @app.route("/round-robin/<int:comp_id>/create-knockout", methods=["POST"])
+    @login_required
+    def rr_create_knockout(comp_id):
+        comp = RoundRobinCompetition.query.get_or_404(comp_id)
+        if not can_access_org(comp.event.organization_id):
+            flash("คุณไม่มีสิทธิ์สร้างรอบ Knockout", "danger")
+            return redirect(url_for("events"))
+        standings = calculate_rr_standings(comp)
+        qualifiers = calculate_rr_qualifiers(comp, standings)
+        teams = build_rr_playoff_seed_order(comp, standings)
+        if len(teams) < 2:
+            flash("ยังมีทีมเข้ารอบไม่พอสำหรับสร้าง Knockout", "warning")
+            return redirect(url_for("rr_detail", comp_id=comp.id))
+        existing = KnockoutCompetition.query.filter_by(source_round_robin_id=comp.id).first()
+        if existing:
+            flash("รายการ Knockout จากรอบนี้มีอยู่แล้ว", "info")
+            return redirect(url_for("knockout_detail", comp_id=existing.id))
+        div = comp.sport_division
+        ko = KnockoutCompetition(
+            event_id=comp.event_id,
+            sport_division_id=comp.sport_division_id,
+            source_round_robin_id=comp.id,
+            name=f"{comp.name} · Knockout",
+            result_type=(div.result_type if div else rr_result_type(comp)) or "score_only",
+            max_sets=(div.max_sets if div else 0) or 0,
+            points_per_set=(div.points_per_set if div else 0) or 0,
+            sets_to_win=(div.sets_to_win if div else 0) or 0,
+            status="scheduled",
+        )
+        db.session.add(ko)
+        db.session.flush()
+        create_knockout_first_round(ko, teams, pairing_mode="adjacent")
+        db.session.commit()
+        flash("สร้างรอบ Knockout จากทีมเข้ารอบแล้ว (ไขว้สายตามสูตรที่กำหนด)", "success")
+        return redirect(url_for("knockout_detail", comp_id=ko.id))
+
+    @app.route("/events/<int:event_id>/knockout")
+    @login_required
+    def event_knockout(event_id):
+        event = Event.query.get_or_404(event_id)
+        if not can_access_org(event.organization_id):
+            flash("คุณไม่มีสิทธิ์เข้าถึงงานนี้", "danger")
+            return redirect(url_for("events"))
+        competitions = KnockoutCompetition.query.filter_by(event_id=event.id).order_by(KnockoutCompetition.created_at.desc()).all()
+        return render_template("knockout/list.html", event=event, competitions=competitions)
+
+    @app.route("/knockout/<int:comp_id>")
+    @login_required
+    def knockout_detail(comp_id):
+        comp = KnockoutCompetition.query.get_or_404(comp_id)
+        if not can_access_org(comp.event.organization_id):
+            flash("คุณไม่มีสิทธิ์เข้าถึงรายการนี้", "danger")
+            return redirect(url_for("events"))
+        rounds = {}
+        for m in comp.matches:
+            rounds.setdefault((m.round_no, m.round_name), []).append(m)
+        return render_template("knockout/detail.html", comp=comp, rounds=rounds)
+
+    @app.route("/knockout/matches/<int:match_id>/score", methods=["POST"])
+    @login_required
+    def knockout_match_score(match_id):
+        match = KnockoutMatch.query.get_or_404(match_id)
+        comp = match.competition
+        if not can_access_org(comp.event.organization_id):
+            flash("คุณไม่มีสิทธิ์บันทึกผลรายการนี้", "danger")
+            return redirect(url_for("events"))
+        if comp.result_type == "set_based":
+            return redirect(url_for("knockout_match_result", match_id=match.id))
+        else:
+            match.score_a = safe_int_or_none(request.form.get("score_a"))
+            match.score_b = safe_int_or_none(request.form.get("score_b"))
+            match.set_a = None
+            match.set_b = None
+        match.note = request.form.get("note", "").strip()
+        if match.team_a_id and not match.team_b_id:
+            match.winner_team_id = match.team_a_id
+            match.status = "completed"
+        elif match.team_b_id and not match.team_a_id:
+            match.winner_team_id = match.team_b_id
+            match.status = "completed"
+        elif match.score_a is not None and match.score_b is not None and match.score_a != match.score_b:
+            match.winner_team_id = match.team_a_id if match.score_a > match.score_b else match.team_b_id
+            match.status = "completed"
+        else:
+            match.winner_team_id = None
+            match.status = "scheduled"
+        db.session.commit()
+        advance_knockout_if_ready(comp)
+        flash("บันทึกผล Knockout แล้ว", "success")
+        return redirect(url_for("knockout_detail", comp_id=comp.id) + f"#match-{match.id}")
+
+    @app.route("/knockout/matches/<int:match_id>/result", methods=["GET", "POST"])
+    @login_required
+    def knockout_match_result(match_id):
+        match = KnockoutMatch.query.get_or_404(match_id)
+        comp = match.competition
+        if not can_access_org(comp.event.organization_id):
+            flash("คุณไม่มีสิทธิ์บันทึกผลรายการนี้", "danger")
+            return redirect(url_for("events"))
+        if comp.result_type != "set_based":
+            return redirect(url_for("knockout_detail", comp_id=comp.id) + f"#match-{match.id}")
+        cfg = knockout_set_config(comp)
+        current_sets = parse_set_scores(match)
+        if request.method == "POST":
+            set_scores = []
+            sets_a = 0
+            sets_b = 0
+            total_a = 0
+            total_b = 0
+            for i in range(1, cfg["max_sets"] + 1):
+                a = safe_int_or_none(request.form.get(f"set_{i}_a"))
+                b = safe_int_or_none(request.form.get(f"set_{i}_b"))
+                if a is None and b is None:
+                    continue
+                a = a or 0
+                b = b or 0
+                set_scores.append({"set": i, "a": a, "b": b})
+                total_a += a
+                total_b += b
+                if a > b:
+                    sets_a += 1
+                elif b > a:
+                    sets_b += 1
+            match.set_scores = json.dumps(set_scores, ensure_ascii=False) if set_scores else None
+            match.score_history = normalize_score_history_payload(request.form.get("score_history"))
+            match.set_a = sets_a if set_scores else None
+            match.set_b = sets_b if set_scores else None
+            match.score_a = sets_a if set_scores else None
+            match.score_b = sets_b if set_scores else None
+            match.point_diff = total_a - total_b if set_scores else 0
+            match.note = request.form.get("note", "").strip()
+            if match.team_a_id and not match.team_b_id:
+                match.winner_team_id = match.team_a_id
+                match.status = "completed"
+            elif match.team_b_id and not match.team_a_id:
+                match.winner_team_id = match.team_b_id
+                match.status = "completed"
+            elif set_scores and sets_a != sets_b and (sets_a >= cfg["sets_to_win"] or sets_b >= cfg["sets_to_win"] or len(set_scores) >= cfg["max_sets"]):
+                match.winner_team_id = match.team_a_id if sets_a > sets_b else match.team_b_id
+                match.status = "completed"
+            else:
+                match.winner_team_id = None
+                match.status = "scheduled"
+            db.session.commit()
+            advance_knockout_if_ready(comp)
+            flash("บันทึกคะแนนรายเซต Knockout แล้ว", "success")
+            return redirect(url_for("knockout_detail", comp_id=comp.id) + f"#match-{match.id}")
+        return render_template("knockout/match_result.html", match=match, comp=comp, cfg=cfg, current_sets=current_sets, score_history=parse_score_history(match))
+
+
+    @app.route("/knockout/<int:comp_id>/delete", methods=["POST"])
+    @login_required
+    def knockout_delete(comp_id):
+        comp = KnockoutCompetition.query.get_or_404(comp_id)
+        event_id = comp.event_id
+        if not can_access_org(comp.event.organization_id):
+            flash("คุณไม่มีสิทธิ์ลบรายการนี้", "danger")
+            return redirect(url_for("events"))
+        db.session.delete(comp)
+        db.session.commit()
+        flash("ลบรายการ Knockout แล้ว", "info")
+        return redirect(url_for("event_knockout", event_id=event_id))
 
 
     @app.route("/events/<int:event_id>/ranking")
@@ -2453,8 +3680,8 @@ def register_routes(app):
                     currency=plan.currency,
                     due_date=date.today() + timedelta(days=7),
                     status="paid" if plan.price <= 0 else "unpaid",
-                    payment_method="manual",
-                    note="Manual Payment / รอตรวจสอบการชำระเงิน",
+                    payment_method=request.form.get("payment_gateway", "manual"),
+                    note="Payment Gateway / รอตรวจสอบการชำระเงิน",
                 )
                 if plan.price <= 0:
                     invoice.paid_at = datetime.utcnow()
@@ -2528,114 +3755,139 @@ def register_routes(app):
             return redirect(url_for("organizations"))
         if invoice.status == "paid":
             flash("ใบแจ้งหนี้นี้ชำระแล้ว", "info")
-            return redirect(url_for("invoice_print", invoice_id=invoice.id))
-        if request.method == "POST":
-            gateway = request.form.get("gateway", "manual")
-            if not payment_gateway_enabled(gateway):
-                flash("ช่องทางชำระเงินนี้ยังไม่ได้ตั้งค่า", "warning")
-                return redirect(url_for("invoice_pay", invoice_id=invoice.id))
-            trx = create_payment_transaction(invoice, gateway)
-            try:
-                if gateway == "manual":
-                    trx.status = "pending"
-                    trx.raw_response = json.dumps({"note": request.form.get("manual_note", "")}, ensure_ascii=False)
-                    invoice.payment_gateway = "manual"
-                    db.session.commit()
-                    flash("บันทึกคำขอชำระแบบ Manual แล้ว รอ Super Admin ตรวจสอบ", "success")
-                    return redirect(url_for("organizations_billing", org_id=invoice.organization_id))
-                if gateway == "promptpay":
-                    from flask import current_app
-                    promptpay_id = current_app.config.get("PROMPTPAY_ID")
-                    trx.qr_payload = create_promptpay_payload(promptpay_id, invoice.amount)
-                    invoice.payment_gateway = "promptpay"
-                    db.session.commit()
-                    return redirect(url_for("payment_status", transaction_id=trx.id))
-                if gateway == "stripe":
-                    checkout_url = create_stripe_checkout(invoice, trx)
-                    return redirect(checkout_url)
-                if gateway == "omise":
-                    token = request.form.get("omise_token", "").strip()
-                    if not token:
-                        flash("Omise ต้องมี token จากหน้า Checkout ก่อน", "warning")
-                        return redirect(url_for("invoice_pay", invoice_id=invoice.id))
-                    checkout_url = create_omise_charge(invoice, trx, token)
-                    if checkout_url:
-                        return redirect(checkout_url)
-                    return redirect(url_for("payment_status", transaction_id=trx.id))
-            except Exception as exc:
-                trx.status = "failed"
-                trx.raw_response = str(exc)
-                db.session.commit()
-                flash(f"สร้างรายการชำระเงินไม่สำเร็จ: {exc}", "danger")
-                return redirect(url_for("invoice_pay", invoice_id=invoice.id))
-        transactions = PaymentTransaction.query.filter_by(invoice_id=invoice.id).order_by(PaymentTransaction.created_at.desc()).all()
-        return render_template("billing/pay.html", invoice=invoice, transactions=transactions)
+            return redirect(url_for("organizations_billing", org_id=invoice.organization_id))
+        gateway = request.form.get("gateway") if request.method == "POST" else (request.args.get("gateway") or invoice.payment_method or "manual")
+        if gateway not in current_app_payment_gateways():
+            flash("ยังไม่ได้เปิด Payment Gateway นี้", "warning")
+            return redirect(url_for("organizations_billing", org_id=invoice.organization_id))
 
-    @app.route("/payments/<int:transaction_id>")
+        txn = PaymentTransaction(
+            organization_id=invoice.organization_id,
+            invoice_id=invoice.id,
+            gateway=gateway,
+            amount=invoice.amount,
+            currency=invoice.currency,
+            status="pending",
+            provider_reference=f"KS-{invoice.invoice_no}-{uuid.uuid4().hex[:8]}",
+        )
+        if gateway == "promptpay":
+            promptpay_id = current_app.config.get("PROMPTPAY_ID")
+            if not promptpay_id:
+                flash("ยังไม่ได้ตั้งค่า PROMPTPAY_ID ใน .env", "danger")
+                return redirect(url_for("organizations_billing", org_id=invoice.organization_id))
+            txn.qr_payload = build_promptpay_payload(promptpay_id, invoice.amount)
+            txn.note = "สแกนจ่าย PromptPay แล้วให้แอดมินตรวจหลักฐาน/กดรับชำระ"
+        elif gateway == "manual":
+            txn.note = "โอนเงิน/ชำระเงินนอกระบบ แล้วให้ Super Admin กดรับชำระ"
+        elif gateway == "stripe":
+            txn.checkout_url = create_stripe_checkout_url(invoice, txn.provider_reference)
+        elif gateway == "omise":
+            txn.note = "เตรียมข้อมูล Transaction สำหรับ Omise / ต้องต่อ Secret Key และ Webhook เพิ่ม"
+        db.session.add(txn)
+        invoice.payment_method = gateway
+        db.session.commit()
+
+        if gateway == "stripe" and txn.checkout_url:
+            return redirect(txn.checkout_url)
+        return redirect(url_for("payment_transaction", txn_id=txn.id))
+
+    @app.route("/payments/<int:txn_id>")
     @login_required
-    def payment_status(transaction_id):
-        trx = PaymentTransaction.query.get_or_404(transaction_id)
-        if not can_access_org(trx.invoice.organization_id):
+    def payment_transaction(txn_id):
+        txn = PaymentTransaction.query.get_or_404(txn_id)
+        if not can_access_org(txn.organization_id):
             flash("คุณไม่มีสิทธิ์ดูรายการชำระเงินนี้", "danger")
             return redirect(url_for("organizations"))
-        return render_template("billing/payment_status.html", trx=trx)
+        rebuilt = ensure_promptpay_payload_for_transaction(txn)
+        qr_data, qr_error = make_promptpay_qr_data_uri(txn.qr_payload) if txn.qr_payload else (None, "ไม่พบข้อมูล PromptPay payload")
+        if rebuilt:
+            flash("ระบบซ่อม PromptPay QR เดิมให้เป็นรูปแบบที่แอปธนาคารสแกนได้แล้ว", "success")
+        return render_template("billing/payment_transaction.html", txn=txn, qr_data=qr_data, qr_error=qr_error)
 
-    @app.route("/payments/<int:transaction_id>/cancel")
+    @app.route("/payments/<int:txn_id>/promptpay-qr.png")
     @login_required
-    def payment_cancel(transaction_id):
-        trx = PaymentTransaction.query.get_or_404(transaction_id)
-        if not can_access_org(trx.invoice.organization_id):
-            flash("คุณไม่มีสิทธิ์ทำรายการนี้", "danger")
+    def payment_promptpay_qr_png(txn_id):
+        txn = PaymentTransaction.query.get_or_404(txn_id)
+        if not can_access_org(txn.organization_id):
+            flash("คุณไม่มีสิทธิ์ดูรายการชำระเงินนี้", "danger")
             return redirect(url_for("organizations"))
-        trx.status = "cancelled"
-        db.session.commit()
-        flash("ยกเลิกรายการชำระเงินแล้ว", "info")
-        return redirect(url_for("invoice_pay", invoice_id=trx.invoice_id))
+        ensure_promptpay_payload_for_transaction(txn)
+        png_bytes, error = make_promptpay_qr_png(txn.qr_payload)
+        if not png_bytes:
+            return error or "สร้าง QR ไม่สำเร็จ", 500
+        return send_file(BytesIO(png_bytes), mimetype="image/png", download_name=f"promptpay-{txn.provider_reference or txn.id}.png")
 
-    @app.route("/payments/stripe/success")
-    @login_required
-    def payment_stripe_success():
-        trx = PaymentTransaction.query.get_or_404(int(request.args.get("transaction_id") or 0))
-        if not can_access_org(trx.invoice.organization_id):
-            flash("คุณไม่มีสิทธิ์ทำรายการนี้", "danger")
-            return redirect(url_for("organizations"))
-        trx.status = "paid"
-        trx.paid_at = datetime.utcnow()
-        mark_invoice_paid(trx.invoice, "stripe", trx.provider_reference)
-        flash("ชำระเงินผ่าน Stripe สำเร็จ", "success")
-        return redirect(url_for("organizations_billing", org_id=trx.invoice.organization_id))
-
-    @app.route("/payments/omise/return")
-    @login_required
-    def payment_omise_return():
-        trx = PaymentTransaction.query.get_or_404(int(request.args.get("transaction_id") or 0))
-        if not can_access_org(trx.invoice.organization_id):
-            flash("คุณไม่มีสิทธิ์ทำรายการนี้", "danger")
-            return redirect(url_for("organizations"))
-        # สถานะจริงควรยืนยันอีกครั้งด้วย webhook/charge API; route นี้ใช้รับกลับจาก authorize_uri
-        if trx.status != "paid":
-            trx.status = "pending"
-            db.session.commit()
-            flash("กลับจาก Omise แล้ว รอการยืนยันสถานะจากระบบ/แอดมิน", "info")
-        else:
-            flash("ชำระเงินผ่าน Omise สำเร็จ", "success")
-        return redirect(url_for("organizations_billing", org_id=trx.invoice.organization_id))
-
-    @app.route("/admin/payments/<int:transaction_id>/mark-paid", methods=["POST"])
+    @app.route("/payments/<int:txn_id>/mark-paid", methods=["POST"])
     @login_required
     @superadmin_required
-    def admin_payment_mark_paid(transaction_id):
-        trx = PaymentTransaction.query.get_or_404(transaction_id)
-        trx.status = "paid"
-        trx.paid_at = datetime.utcnow()
-        mark_invoice_paid(trx.invoice, trx.gateway, trx.provider_reference)
-        flash("ยืนยันการชำระเงินแล้ว", "success")
-        return redirect(url_for("organizations_billing", org_id=trx.invoice.organization_id))
+    def payment_mark_paid(txn_id):
+        txn = PaymentTransaction.query.get_or_404(txn_id)
+        txn.status = "paid"
+        txn.paid_at = datetime.utcnow()
+        mark_invoice_paid(txn.invoice, gateway=txn.gateway, reference=txn.provider_reference)
+        flash("ยืนยันรับชำระเงินแล้ว", "success")
+        return redirect(url_for("organizations_billing", org_id=txn.organization_id))
+
+    @app.route("/payments/webhook/stripe", methods=["POST"])
+    def stripe_webhook():
+        payload = request.get_data(as_text=True)
+        sig_header = request.headers.get("Stripe-Signature", "")
+        secret = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+        try:
+            import stripe
+            if secret:
+                event = stripe.Webhook.construct_event(payload, sig_header, secret)
+            else:
+                event = json.loads(payload)
+            if event.get("type") == "checkout.session.completed":
+                session_obj = event.get("data", {}).get("object", {})
+                ref = (session_obj.get("metadata") or {}).get("provider_reference")
+                txn = PaymentTransaction.query.filter_by(provider_reference=ref).first() if ref else None
+                if txn:
+                    txn.status = "paid"
+                    txn.paid_at = datetime.utcnow()
+                    txn.raw_response = payload
+                    mark_invoice_paid(txn.invoice, gateway="stripe", reference=ref)
+            return jsonify({"ok": True})
+        except Exception as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
 
     @app.route("/settings")
     @login_required
     def settings():
-        return render_template("settings.html")
+        org_ids = user_org_ids()
+        event_query = Event.query
+        org_query = Organization.query
+        if org_ids is not None:
+            event_query = event_query.filter(Event.organization_id.in_(org_ids or [0]))
+            org_query = org_query.filter(Organization.id.in_(org_ids or [0]))
+        events_list = event_query.order_by(Event.created_at.desc()).all()
+        orgs = org_query.order_by(Organization.created_at.desc()).all()
+        active_event = Event.query.get(session.get("active_event_id")) if session.get("active_event_id") else None
+        active_org = Organization.query.get(session.get("active_org_id")) if session.get("active_org_id") else None
+        return render_template("settings.html", events=events_list, organizations=orgs, active_event=active_event, active_org=active_org)
+
+    @app.route("/settings/active-event", methods=["POST"])
+    @login_required
+    def settings_active_event():
+        event_id = request.form.get("event_id")
+        if not event_id:
+            session.pop("active_event_id", None)
+            flash("ล้างงานที่เลือกแล้ว", "info")
+            return redirect(url_for("settings"))
+        event = Event.query.get_or_404(int(event_id))
+        if not can_access_org(event.organization_id):
+            flash("คุณไม่มีสิทธิ์เข้าถึงงานนี้", "danger")
+            return redirect(url_for("settings"))
+        session["active_event_id"] = event.id
+        session["active_org_id"] = event.organization_id
+        flash(f"เลือกงานปัจจุบัน: {event.name}", "success")
+        next_page = request.form.get("next") or "settings"
+        if next_page == "sports":
+            return redirect(url_for("event_sports", event_id=event.id))
+        if next_page == "teams":
+            return redirect(url_for("event_detail", event_id=event.id) + "#teams-section")
+        return redirect(url_for("settings"))
 
 
 
@@ -3008,9 +4260,27 @@ def safe_int_or_none(value):
         return None
 
 
-def seed_default_sports(event):
-    from models import SportCategory, Sport, SportDivision
-    category_names = ["กรีฑา", "กีฬาทีม", "กีฬาเฉพาะทาง", "กีฬาพื้นบ้าน", "กิจกรรมประกวด"]
+def seed_default_sports(event, force_update=True, reset_catalog=True):
+    """ล้างคลังกีฬาเดิมของอีเว้นท์ แล้วสร้างชุดมาตรฐานใหม่ที่ตรวจจากกติกากลางล่าสุด
+
+    แนวคิดใหม่: คลังมีเฉพาะ "ชนิดกีฬา + ค่าเริ่มต้นกติกา" ไม่สร้างรายการย่อยจำนวนมากตั้งแต่ต้น
+    การแข่งขันจริงให้ไปสร้างที่หน้า /competitions/quick-new แล้วเลือกรุ่น/ทีม/ระบบแข่งขันตอนนั้น
+    """
+    from models import (
+        SportCategory, Sport, SportDivision,
+        RoundRobinCompetition, KnockoutCompetition, RankingCompetition, ContestCompetition,
+    )
+
+    if reset_catalog:
+        # ป้องกัน FK ค้าง หากเคยสร้างการแข่งขันผูกกับ division เก่าไว้
+        RoundRobinCompetition.query.filter_by(event_id=event.id).update({RoundRobinCompetition.sport_division_id: None}, synchronize_session=False)
+        KnockoutCompetition.query.filter_by(event_id=event.id).update({KnockoutCompetition.sport_division_id: None}, synchronize_session=False)
+        RankingCompetition.query.filter_by(event_id=event.id).update({RankingCompetition.sport_division_id: None}, synchronize_session=False)
+        ContestCompetition.query.filter_by(event_id=event.id).update({ContestCompetition.sport_division_id: None}, synchronize_session=False)
+        SportCategory.query.filter_by(event_id=event.id).delete(synchronize_session=False)
+        db.session.flush()
+
+    category_names = ["กีฬาทีม", "กีฬาเฉพาะทาง", "กรีฑา", "กีฬาพื้นบ้าน", "กิจกรรมประกวด"]
     categories = {}
     for i, name in enumerate(category_names, start=1):
         cat = SportCategory.query.filter_by(event_id=event.id, name=name).first()
@@ -3020,45 +4290,186 @@ def seed_default_sports(event):
             db.session.flush()
         categories[name] = cat
 
-    def sport(name, category, default_format, result_type="score_only", max_sets=0, points_per_set=0, sets_to_win=0):
-        item = Sport.query.filter_by(event_id=event.id, name=name).first()
-        if not item:
-            item = Sport(event_id=event.id, category_id=categories[category].id, name=name, default_format=default_format, result_type=result_type, max_sets=max_sets, points_per_set=points_per_set, sets_to_win=sets_to_win, is_active=True)
-            db.session.add(item)
+    # ค่ากติกากลางตรวจล่าสุด: 2026-06-19
+    # หมายเหตุ: schema ปัจจุบันยังไม่มีช่อง decisive_set_points/deuce_cap จึงเก็บรายละเอียดไว้ใน note ก่อน
+    presets = [
+        {"name": "ฟุตบอล", "category": "กีฬาทีม", "format": "round_robin", "result": "score_only", "max_sets": 0, "points": 0, "win": 0, "note": "IFAB Laws of the Game 2025/26: บันทึกผลเป็นประตูได้-เสีย ระยะเวลาแข่งขันปรับตามระเบียบงานได้ | checked 2026-06-19"},
+        {"name": "ฟุตซอล", "category": "กีฬาทีม", "format": "round_robin", "result": "score_only", "max_sets": 0, "points": 0, "win": 0, "note": "FIFA Futsal Laws of the Game 2025/26: ปกติ 2 ครึ่ง ครึ่งละ 20 นาที บันทึกผลเป็นประตูได้-เสีย | checked 2026-06-19"},
+        {"name": "วอลเลย์บอล", "category": "กีฬาทีม", "format": "round_robin", "result": "set_based", "max_sets": 5, "points": 25, "win": 3, "note": "FIVB Official Volleyball Rules 2025-2028: ชนะ 3 เซต; เซต 1-4 ถึง 25 แต้ม ต้องห่าง 2; เซตตัดสินถึง 15 แต้ม | checked 2026-06-19"},
+        {"name": "เซปักตะกร้อ", "category": "กีฬาทีม", "format": "round_robin", "result": "set_based", "max_sets": 3, "points": 15, "win": 2, "note": "ISTAF Law of the Game 2024: ชนะ 2 ใน 3 เซต; เซตละ 15 แต้ม; 14-14 เล่นถึง 17 แต้ม | checked 2026-06-19"},
+        {"name": "เปตอง", "category": "กีฬาเฉพาะทาง", "format": "knockout", "result": "score_only", "max_sets": 0, "points": 13, "win": 0, "note": "FIPJP Official Rules: เกมปกติถึง 13 คะแนน; ลีก/รอบคัดเลือกอาจกำหนด 11 คะแนนตามระเบียบงาน | checked 2026-06-19"},
+        {"name": "แบดมินตัน", "category": "กีฬาเฉพาะทาง", "format": "knockout", "result": "set_based", "max_sets": 3, "points": 21, "win": 2, "note": "BWF Laws ปัจจุบัน: 2 ใน 3 เกม เกมละ 21 แต้ม; BWF อนุมัติ 3x15 เริ่ม 4 ม.ค. 2027 | checked 2026-06-19"},
+        {"name": "เทเบิลเทนนิส", "category": "กีฬาเฉพาะทาง", "format": "knockout", "result": "set_based", "max_sets": 5, "points": 11, "win": 3, "note": "ITTF Laws: เกมละ 11 แต้ม ต้องชนะห่าง 2; ค่าเริ่มต้นระบบใช้ 3 ใน 5 เกม | checked 2026-06-19"},
+        {"name": "บาสเกตบอล", "category": "กีฬาทีม", "format": "round_robin", "result": "score_only", "max_sets": 0, "points": 0, "win": 0, "note": "FIBA: บันทึกคะแนนรวมของเกม; งานโรงเรียนปรับเวลาควอเตอร์ตามระเบียบงานได้ | checked 2026-06-19"},
+        {"name": "กรีฑา", "category": "กรีฑา", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "World Athletics: ใช้ผลเวลา/ระยะ/อันดับ ไม่ใช่ระบบเซต | checked 2026-06-19"},
+        {"name": "วิ่ง 50 เมตร", "category": "กรีฑา", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา | checked 2026-06-19"},
+        {"name": "วิ่ง 100 เมตร", "category": "กรีฑา", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา | checked 2026-06-19"},
+        {"name": "วิ่งผลัด", "category": "กรีฑา", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา | checked 2026-06-19"},
+        {"name": "ชักเย่อ", "category": "กีฬาพื้นบ้าน", "format": "knockout", "result": "set_based", "max_sets": 3, "points": 0, "win": 2, "note": "กีฬาโรงเรียน/กีฬาพื้นบ้าน: ค่าเริ่มต้นชนะ 2 ใน 3 เที่ยว ปรับเองได้ตามระเบียบงาน | checked 2026-06-19"},
+        {"name": "วิ่งกระสอบ", "category": "กีฬาพื้นบ้าน", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา | checked 2026-06-19"},
+        {"name": "วิ่งสามขา", "category": "กีฬาพื้นบ้าน", "format": "ranking", "result": "ranking", "max_sets": 0, "points": 0, "win": 0, "note": "บันทึกอันดับหรือเวลา | checked 2026-06-19"},
+        {"name": "ประกวดกองเชียร์", "category": "กิจกรรมประกวด", "format": "score_judging", "result": "contest", "max_sets": 0, "points": 0, "win": 0, "note": "ใช้กรรมการให้คะแนน ปรับเกณฑ์ได้ตามงาน | checked 2026-06-19"},
+    ]
+
+    for index, rec in enumerate(presets, start=1):
+        sport = Sport.query.filter_by(event_id=event.id, name=rec["name"]).first()
+        data = dict(
+            category_id=categories[rec["category"]].id,
+            default_format=rec["format"],
+            result_type=rec["result"],
+            max_sets=rec["max_sets"] if rec["result"] == "set_based" else 0,
+            points_per_set=rec["points"] if rec["result"] == "set_based" else 0,
+            sets_to_win=rec["win"] if rec["result"] == "set_based" else 0,
+            note=rec["note"],
+            is_active=True,
+        )
+        if not sport:
+            sport = Sport(event_id=event.id, name=rec["name"], **data)
+            db.session.add(sport)
             db.session.flush()
         else:
-            item.result_type = item.result_type or result_type
-            item.max_sets = item.max_sets or max_sets
-            item.points_per_set = item.points_per_set or points_per_set
-            item.sets_to_win = item.sets_to_win or sets_to_win
-        return item
+            for k, v in data.items():
+                setattr(sport, k, v)
 
-    def divisions(sp, classes, genders, fmt=None):
-        for cls in classes:
-            for gender in genders:
-                if not SportDivision.query.filter_by(sport_id=sp.id, class_name=cls, gender=gender).first():
-                    db.session.add(SportDivision(sport_id=sp.id, class_name=cls, gender=gender, competition_format=fmt or sp.default_format, result_type=sp.result_type, max_sets=sp.max_sets, points_per_set=sp.points_per_set, sets_to_win=sp.sets_to_win))
-
-    grades = ["อนุบาล", "ป.1", "ป.2", "ป.3", "ป.4", "ป.5", "ป.6", "ม.1", "ม.2", "ม.3"]
-    genders = ["ชาย", "หญิง"]
-    for run in ["วิ่ง 50 เมตร", "วิ่ง 80 เมตร", "วิ่ง 100 เมตร", "วิ่ง 200 เมตร", "วิ่งผลัด"]:
-        divisions(sport(run, "กรีฑา", "ranking", "ranking"), grades, genders, "ranking")
-
-    team_classes = ["อนุบาล", "ประถมต้น", "ประถมปลาย", "มัธยมต้น", "มัธยมปลาย"]
-    for name in ["ชักเย่อ", "วิ่งกระสอบ", "วิ่งสามขา", "วิ่งเปี้ยว"]:
-        divisions(sport(name, "กีฬาพื้นบ้าน", "ranking", "ranking"), team_classes, ["ชาย", "หญิง", "ผสม"], "ranking")
-
-    for name in ["ฟุตซอล", "ฟุตบอล"]:
-        divisions(sport(name, "กีฬาทีม", "round_robin", "score_only"), ["ประถมต้น", "ประถมปลาย", "มัธยมต้น", "มัธยมปลาย"], genders, "round_robin")
-    divisions(sport("วอลเลย์บอล", "กีฬาทีม", "round_robin", "set_based", 5, 25, 3), ["ประถมต้น", "ประถมปลาย", "มัธยมต้น", "มัธยมปลาย"], genders, "round_robin")
-    divisions(sport("เซปักตะกร้อ", "กีฬาทีม", "round_robin", "set_based", 3, 21, 2), ["ประถมต้น", "ประถมปลาย", "มัธยมต้น", "มัธยมปลาย"], genders, "round_robin")
-
-    divisions(sport("เปตอง", "กีฬาเฉพาะทาง", "knockout", "score_only"), ["ประถมต้น", "ประถมปลาย", "มัธยมต้น", "มัธยมปลาย", "Open"], ["ชาย", "หญิง", "ผสม"], "knockout")
-    divisions(sport("แบดมินตัน", "กีฬาเฉพาะทาง", "knockout", "set_based", 3, 21, 2), ["ประถมต้น", "ประถมปลาย", "มัธยมต้น", "มัธยมปลาย", "Open"], ["ชาย", "หญิง", "ผสม"], "knockout")
-    divisions(sport("เทเบิลเทนนิส", "กีฬาเฉพาะทาง", "knockout", "set_based", 5, 11, 3), ["ประถมต้น", "ประถมปลาย", "มัธยมต้น", "มัธยมปลาย", "Open"], ["ชาย", "หญิง", "ผสม"], "knockout")
+        # สร้างรายการย่อยเริ่มต้นให้น้อยที่สุดเท่านั้น เพื่อไม่ให้หน้าอีเว้นท์รกเป็นร้อยรายการ
+        div = SportDivision.query.filter_by(sport_id=sport.id, class_name="Open", gender="รวม").first()
+        if not div:
+            div = SportDivision(sport_id=sport.id, class_name="Open", gender="รวม")
+            db.session.add(div)
+        div.competition_format = rec["format"]
+        div.result_type = rec["result"]
+        div.max_sets = data["max_sets"]
+        div.points_per_set = data["points_per_set"]
+        div.sets_to_win = data["sets_to_win"]
+        div.max_athletes_per_team = None
+        div.is_active = True
 
     db.session.commit()
 
+
+def normalize_event_sport_settings(event):
+    """ซ่อม settings ของกีฬาที่มีอยู่แล้วจากข้อมูลเก่าให้ตรงชนิดกีฬา"""
+    seed_default_sports(event, force_update=True)
+
+
+def knockout_round_name(team_count):
+    if team_count <= 2:
+        return "ชิงชนะเลิศ"
+    if team_count <= 4:
+        return "รอบรองชนะเลิศ"
+    if team_count <= 8:
+        return "รอบ 8 ทีม"
+    if team_count <= 16:
+        return "รอบ 16 ทีม"
+    return f"รอบ {team_count} ทีม"
+
+
+def create_knockout_first_round(comp, teams, pairing_mode="balanced"):
+    """สร้างคู่ Knockout รอบแรก
+    - balanced: 1 พบท้ายสุด / 2 พบรองท้ายสุด เหมาะกับการ seed
+    - adjacent: ทีมที่อยู่ติดกันเจอกัน 1-2, 3-4 แล้วผู้ชนะสายติดกันเจอกันต่อ ใช้ง่ายกับกีฬาสี/อบต.
+    """
+    from models import KnockoutMatch
+    ordered = list(teams)
+    round_name = knockout_round_name(len(ordered))
+
+    pairs = []
+    if pairing_mode == "adjacent":
+        for i in range(0, len(ordered), 2):
+            team_a = ordered[i] if i < len(ordered) else None
+            team_b = ordered[i + 1] if i + 1 < len(ordered) else None
+            pairs.append((team_a, team_b))
+    else:
+        pair_count = (len(ordered) + 1) // 2
+        for i in range(pair_count):
+            team_a = ordered[i]
+            team_b = ordered[-(i + 1)] if i != len(ordered) - (i + 1) else None
+            pairs.append((team_a, team_b))
+
+    for i, (team_a, team_b) in enumerate(pairs, start=1):
+        match = KnockoutMatch(
+            competition_id=comp.id,
+            round_no=1,
+            round_name=round_name,
+            match_no=i,
+            team_a_id=team_a.id if team_a else None,
+            team_b_id=team_b.id if team_b else None,
+            status="scheduled",
+        )
+        if team_a and not team_b:
+            match.winner_team_id = team_a.id
+            match.status = "completed"
+        db.session.add(match)
+    db.session.flush()
+
+
+def build_rr_playoff_seed_order(comp, standings):
+    """จัดลำดับทีมเข้ารอบให้ไขว้สายแบบกีฬาทั่วไป ก่อนส่งเข้า Knockout แบบ adjacent
+    ตัวอย่าง 2 กลุ่ม อันดับ 1-2: A1-B2, B1-A2
+    ตัวอย่าง 4 กลุ่ม อันดับ 1-2: A1-B2, B1-A2, C1-D2, D1-C2
+    ถ้าเป็นสูตรอื่นหรือมี best runner-up ให้ fallback ตามอันดับที่คำนวณไว้
+    """
+    groups = sorted(comp.groups, key=lambda g: g.sort_order)
+    rows_by_group = {g.id: standings.get(g.id, []) for g in groups}
+
+    if comp.best_runnerup_count == 0 and comp.advance_per_group == 2 and len(groups) == 2:
+        a, b = groups[0], groups[1]
+        return [rows_by_group[a.id][0]["team"], rows_by_group[b.id][1]["team"], rows_by_group[b.id][0]["team"], rows_by_group[a.id][1]["team"]]
+
+    if comp.best_runnerup_count == 0 and comp.advance_per_group == 2 and len(groups) == 4:
+        a, b, c, d = groups[:4]
+        return [
+            rows_by_group[a.id][0]["team"], rows_by_group[b.id][1]["team"],
+            rows_by_group[b.id][0]["team"], rows_by_group[a.id][1]["team"],
+            rows_by_group[c.id][0]["team"], rows_by_group[d.id][1]["team"],
+            rows_by_group[d.id][0]["team"], rows_by_group[c.id][1]["team"],
+        ]
+
+    if comp.best_runnerup_count == 0 and comp.advance_per_group == 1 and len(groups) == 4:
+        a, b, c, d = groups[:4]
+        return [rows_by_group[a.id][0]["team"], rows_by_group[d.id][0]["team"], rows_by_group[b.id][0]["team"], rows_by_group[c.id][0]["team"]]
+
+    qualifiers = calculate_rr_qualifiers(comp, standings)
+    return [q["team"] for q in qualifiers]
+
+
+def advance_knockout_if_ready(comp):
+    """ถ้ารอบล่าสุดแข่งครบ สร้างรอบถัดไปอัตโนมัติ"""
+    from models import KnockoutMatch
+    rounds = sorted({m.round_no for m in comp.matches})
+    if not rounds:
+        return
+    latest_round = rounds[-1]
+    latest_matches = [m for m in comp.matches if m.round_no == latest_round]
+    if any(not m.winner_team_id for m in latest_matches):
+        return
+    if len(latest_matches) <= 1:
+        comp.status = "completed"
+        db.session.commit()
+        return
+    if any(m.round_no == latest_round + 1 for m in comp.matches):
+        return
+    winners = [m.winner_team for m in sorted(latest_matches, key=lambda x: x.match_no) if m.winner_team]
+    round_name = knockout_round_name(len(winners))
+    pair_count = (len(winners) + 1) // 2
+    for i in range(pair_count):
+        team_a = winners[i * 2] if i * 2 < len(winners) else None
+        team_b = winners[i * 2 + 1] if i * 2 + 1 < len(winners) else None
+        match = KnockoutMatch(
+            competition_id=comp.id,
+            round_no=latest_round + 1,
+            round_name=round_name,
+            match_no=i + 1,
+            team_a_id=team_a.id if team_a else None,
+            team_b_id=team_b.id if team_b else None,
+            status="scheduled",
+        )
+        if team_a and not team_b:
+            match.winner_team_id = team_a.id
+            match.status = "completed"
+        db.session.add(match)
+    comp.status = "in_progress"
+    db.session.commit()
 
 
 def create_rr_groups(comp):
@@ -3127,7 +4538,7 @@ def team_logo_url(team):
 
 
 def build_live_board_data(event, setting):
-    from models import RoundRobinCompetition, RoundRobinMatch, RankingCompetition, RankingResult, ContestCompetition, ContestResult
+    from models import RoundRobinCompetition, RoundRobinMatch, KnockoutCompetition, KnockoutMatch, RankingCompetition, RankingResult, ContestCompetition, ContestResult
     entries = collect_medal_entries(event)
     medal_table = build_medal_table(event, entries)[:8]
     medals = []
@@ -3275,6 +4686,67 @@ def parse_set_scores(match):
         return data if isinstance(data, list) else []
     except Exception:
         return []
+
+
+def set_score_rows(match):
+    """คืนคะแนนรายเซตในรูปแบบที่ template อ่านง่าย ไม่โชว์ JSON ดิบ"""
+    rows = []
+    for idx, row in enumerate(parse_set_scores(match), start=1):
+        if not isinstance(row, dict):
+            continue
+        set_no = safe_int(row.get("set")) or idx
+        a = safe_int(row.get("a"))
+        b = safe_int(row.get("b"))
+        if a > b:
+            winner = "a"
+        elif b > a:
+            winner = "b"
+        else:
+            winner = "draw"
+        rows.append({"set": set_no, "a": a, "b": b, "winner": winner})
+    return rows
+
+
+def parse_score_history(match):
+    if not getattr(match, "score_history", None):
+        return []
+    try:
+        data = json.loads(match.score_history)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def normalize_score_history_payload(raw):
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, list):
+            return None
+        cleaned = []
+        for idx, row in enumerate(data[-500:], start=1):
+            if not isinstance(row, dict):
+                continue
+            cleaned.append({
+                "no": safe_int(row.get("no")) or idx,
+                "set": safe_int(row.get("set")),
+                "team": str(row.get("team", ""))[:200],
+                "side": str(row.get("side", ""))[:1],
+                "a": safe_int(row.get("a")),
+                "b": safe_int(row.get("b")),
+                "at": str(row.get("at", ""))[:30],
+            })
+        return json.dumps(cleaned, ensure_ascii=False) if cleaned else None
+    except Exception:
+        return None
+
+
+def knockout_set_config(comp):
+    max_sets = comp.max_sets or 3
+    points_per_set = comp.points_per_set or 21
+    sets_to_win = comp.sets_to_win or ((max_sets // 2) + 1)
+    return {"max_sets": max_sets, "points_per_set": points_per_set, "sets_to_win": sets_to_win}
 
 
 def set_point_totals(match):
@@ -3748,4 +5220,8 @@ def parse_date(value):
 app = create_app()
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    # Railway/production must bind to 0.0.0.0 and use the PORT env var.
+    # Local run still works with: python app.py
+    port = int(os.environ.get("PORT", "5000"))
+    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    app.run(host="0.0.0.0", port=port, debug=debug)

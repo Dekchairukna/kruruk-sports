@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <title>รายงานโปรแกรมและการจัดการแข่งขัน - {{ event.name }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    @page{size:A4;margin:14mm 12mm}
+    body{font-family:'Sarabun','TH Sarabun New',system-ui,sans-serif;background:#eef4ff;color:#111827;font-size:14px;line-height:1.45}
+    .book{max-width:980px;margin:0 auto;padding:18px}.sheet{background:#fff;border:1px solid #d8dee9;box-shadow:0 10px 28px rgba(15,23,42,.08);padding:28px;margin:0 auto 18px;min-height:calc(297mm - 28mm);position:relative}.cover{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:linear-gradient(180deg,#faf5ff,#eff6ff 58%,#ffffff)}
+    .logo-mark{width:92px;height:92px;border-radius:28px;background:linear-gradient(135deg,#38bdf8,#6366f1);color:#fff;font-weight:950;font-size:2.4rem;display:grid;place-items:center;margin-bottom:18px}.cover h1{font-size:2.7rem;font-weight:950;letter-spacing:.02em}.cover h2{font-size:1.4rem;font-weight:800;color:#374151}.muted{color:#64748b}.page-title{font-size:1.55rem;font-weight:950;text-align:center;margin-bottom:18px}.section-title{font-size:1.15rem;font-weight:950;border-bottom:3px solid #c084fc;padding-bottom:7px;margin:18px 0 10px}.sub-title{font-size:1rem;font-weight:900;color:#1e3a8a;margin:13px 0 7px}.table{font-size:13px}.table th{background:#f4e8ff!important;color:#111827;text-align:center;vertical-align:middle}.table td{vertical-align:middle}.small-note{font-size:12px;color:#64748b}.team-dot{width:14px;height:14px;border-radius:50%;display:inline-block;vertical-align:-2px;margin-right:5px}.rule-box{border:1px solid #e5e7eb;border-radius:12px;padding:10px;background:#fbfdff;margin-bottom:10px}.route-box{border:1px solid #dbeafe;background:#f8fbff;border-radius:12px;padding:10px;margin:8px 0}.route-title{font-weight:950;color:#1d4ed8;margin-bottom:5px}.route-item{display:grid;grid-template-columns:54px 1fr 38px 1fr;gap:6px;padding:5px 0;border-top:1px dashed #dbe4f0}.route-item:first-of-type{border-top:0}.route-item b{font-weight:900}.signature{display:flex;justify-content:flex-end;margin-top:36px;text-align:center}.signature .box{min-width:270px}.no-print{position:sticky;top:0;z-index:5;background:#111827;color:#fff;padding:10px 16px;border-radius:0 0 16px 16px;margin-bottom:14px;display:flex;justify-content:space-between;gap:10px;align-items:center}.btn-print{border:0;background:#facc15;color:#111827;padding:8px 16px;border-radius:999px;font-weight:900}.toc-row{display:flex;justify-content:space-between;border-bottom:1px dotted #cbd5e1;padding:6px 0}.page-break{break-before:page}.score-text{font-weight:900;color:#1d4ed8;text-align:center;white-space:nowrap}.badge-soft{display:inline-block;border:1px solid #c7d2fe;background:#eef2ff;color:#3730a3;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:900}.text-center-muted{text-align:center;color:#94a3b8}
+    @media print{body{background:#fff}.book{max-width:100%;padding:0}.sheet{box-shadow:none;border:0;margin:0;min-height:auto;break-after:page}.sheet:last-child{break-after:auto}.no-print{display:none}.table th{background:#ead3ff!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.cover{background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}.logo-mark{background:#6366f1!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+  </style>
+</head>
+<body>
+<div class="book">
+  <div class="no-print"><div>หน้าพิมพ์รายงานโปรแกรมและการจัดการแข่งขัน</div><button class="btn-print" onclick="window.print()">พิมพ์ / Save as PDF</button></div>
+
+  <section class="sheet cover">
+    <div class="logo-mark">KS</div>
+    <div class="muted">{{ event.organization.name }}</div>
+    <h1>โปรแกรมการแข่งขัน</h1>
+    <h2>{{ event.name }}</h2>
+    <div class="mt-2 fs-5">{% if event.start_date %}{{ event.start_date.strftime('%d/%m/%Y') }}{% endif %}{% if event.end_date %} - {{ event.end_date.strftime('%d/%m/%Y') }}{% endif %}</div>
+    <div class="muted mt-1">{{ event.location or 'ไม่ระบุสถานที่' }}</div>
+    <div class="mt-5 small-note">จัดทำจากระบบ KRURUK SPORTS · {{ generated_at.strftime('%d/%m/%Y %H:%M') }}</div>
+  </section>
+
+  <section class="sheet">
+    <div class="page-title">สารบัญ</div>
+    <div class="toc-row"><span>ข้อมูลทั่วไปของงานแข่งขัน</span><span>1</span></div>
+    <div class="toc-row"><span>ผู้บริหารและผู้รับผิดชอบ</span><span>2</span></div>
+    <div class="toc-row"><span>ทีม/สีในงานแข่งขัน</span><span>3</span></div>
+    <div class="toc-row"><span>โปรแกรมการแข่งขันรอบแบ่งกลุ่ม / พบกันหมด</span><span>4</span></div>
+    <div class="toc-row"><span>เส้นทางเข้ารอบและสาย Knockout</span><span>ต่อเนื่อง</span></div>
+    <div class="toc-row"><span>กีฬาจัดอันดับ / กิจกรรมประกวด / ตารางเหรียญ</span><span>ท้ายเล่ม</span></div>
+  </section>
+
+  <section class="sheet">
+    <div class="page-title">ข้อมูลทั่วไปของงานแข่งขัน</div>
+    <table class="table table-bordered">
+      <tbody>
+        <tr><th style="width:28%">ชื่องาน</th><td>{{ event.name }}</td></tr>
+        <tr><th>หน่วยงาน/องค์กร</th><td>{{ event.organization.name }}{% if event.organization.org_type %} ({{ event.organization.org_type }}){% endif %}</td></tr>
+        <tr><th>วันที่จัดการแข่งขัน</th><td>{% if event.start_date %}{{ event.start_date.strftime('%d/%m/%Y') }}{% else %}-{% endif %}{% if event.end_date %} - {{ event.end_date.strftime('%d/%m/%Y') }}{% endif %}</td></tr>
+        <tr><th>สถานที่</th><td>{{ event.location or '-' }}</td></tr>
+        <tr><th>สถานะ</th><td>{{ event.status }}</td></tr>
+      </tbody>
+    </table>
+    <div class="section-title">สรุปจำนวนข้อมูล</div>
+    <table class="table table-bordered text-center">
+      <thead><tr><th>ทีม/สี</th><th>นักกีฬา</th><th>ผู้ฝึกสอน</th><th>แบ่งกลุ่ม</th><th>Knockout</th><th>จัดอันดับ</th><th>ประกวด</th></tr></thead>
+      <tbody><tr><td>{{ teams|length }}</td><td>{{ athletes|length }}</td><td>{{ coaches|length }}</td><td>{{ rr_sections|length }}</td><td>{{ ko_sections|length }}</td><td>{{ ranking_sections|length }}</td><td>{{ contest_sections|length }}</td></tr></tbody>
+    </table>
+  </section>
+
+  <section class="sheet">
+    <div class="page-title">ผู้บริหารและผู้รับผิดชอบ</div>
+    <div class="section-title">ผู้ดูแลระบบ/ผู้รับผิดชอบระดับองค์กร</div>
+    <table class="table table-bordered">
+      <thead><tr><th style="width:60px">ลำดับ</th><th>ชื่อ</th><th>อีเมล</th><th>บทบาท</th></tr></thead>
+      <tbody>
+        {% for member in org_members %}
+        <tr><td class="text-center">{{ loop.index }}</td><td>{{ member.user.name }}</td><td>{{ member.user.email }}</td><td>{{ member.role }}</td></tr>
+        {% else %}<tr><td colspan="4" class="text-center-muted">ยังไม่มีข้อมูลผู้ดูแล</td></tr>{% endfor %}
+      </tbody>
+    </table>
+
+    <div class="section-title">ผู้บริหาร/ครูประจำทีมสี</div>
+    <table class="table table-bordered">
+      <thead><tr><th style="width:50px">ลำดับ</th><th>ทีม/สี</th><th>ผู้บริหาร/ครูประจำสี</th><th>ผู้ฝึกสอน/ผู้รับผิดชอบ</th></tr></thead>
+      <tbody>
+        {% for team in teams %}
+        <tr>
+          <td class="text-center">{{ loop.index }}</td>
+          <td><span class="team-dot" style="background:{{ team.color_hex }}"></span>{{ team.name }}{% if team.color_name %}<br><span class="small-note">{{ team.color_name }}</span>{% endif %}</td>
+          <td>
+            {% if team.profile %}
+              {% if team.profile.director_name %}<b>ผอ./ผู้บริหาร:</b> {{ team.profile.director_name }}<br>{% endif %}
+              {% if team.profile.deputy_directors %}<b>รอง/ผู้ช่วย:</b> {{ team.profile.deputy_directors }}<br>{% endif %}
+              {% if team.profile.advisors %}<b>ครูที่ปรึกษา:</b> {{ team.profile.advisors }}{% endif %}
+            {% else %}-{% endif %}
+          </td>
+          <td>
+            {% set team_coaches = [] %}
+            {% for c in coaches if c.team_id == team.id %}{% set _ = team_coaches.append(c) %}{% endfor %}
+            {% for c in team_coaches %}{{ c.full_name }}{% if c.sport_responsibility %} ({{ c.sport_responsibility }}){% endif %}{% if not loop.last %}<br>{% endif %}{% else %}{{ team.profile.coaches_summary if team.profile and team.profile.coaches_summary else '-' }}{% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="sheet">
+    <div class="page-title">ทีม/สีในงานแข่งขัน</div>
+    <table class="table table-bordered">
+      <thead><tr><th style="width:60px">ลำดับ</th><th>ทีม/สี</th><th>คำขวัญ/ข้อมูลขบวน</th><th>จำนวนนักกีฬา</th><th>ผู้ฝึกสอน</th></tr></thead>
+      <tbody>
+        {% for team in teams %}
+        <tr>
+          <td class="text-center">{{ loop.index }}</td>
+          <td><span class="team-dot" style="background:{{ team.color_hex }}"></span><b>{{ team.name }}</b><br><span class="small-note">{{ team.color_name or '' }}</span></td>
+          <td>{{ team.motto or '' }}{% if team.profile and team.profile.parade_title %}<br><span class="small-note">ขบวน: {{ team.profile.parade_title }}</span>{% endif %}</td>
+          <td class="text-center">{{ team.athletes|length }}</td>
+          <td class="text-center">{{ team.coaches|length }}</td>
+        </tr>
+        {% else %}<tr><td colspan="5" class="text-center-muted">ยังไม่มีทีม/สี</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  {% for section in rr_sections %}
+  {% set comp = section.comp %}
+  <section class="sheet">
+    <div class="page-title">โปรแกรมการแข่งขัน {{ comp.name }}</div>
+    <div class="text-center muted mb-3">{{ comp.sport_division.label if comp.sport_division else 'ไม่ระบุชนิดกีฬา' }} · {{ comp.num_groups }} กลุ่ม · เข้ารอบกลุ่มละ {{ comp.advance_per_group }}{% if comp.best_runnerup_count %} + รองดีที่สุด {{ comp.best_runnerup_count }}{% endif %}</div>
+    {% if comp.sport_division and comp.sport_division.sport and comp.sport_division.sport.note %}
+    <div class="rule-box"><b>ระเบียบ/กติกา:</b> {{ comp.sport_division.sport.note }}</div>
+    {% endif %}
+
+    {% for g in section.groups %}
+      <div class="sub-title">กลุ่ม {{ g.group.name }}</div>
+      <table class="table table-bordered">
+        <thead><tr><th style="width:60px">คู่ที่</th><th>ทีม A</th><th style="width:110px">ผล</th><th>ทีม B</th><th>หมายเหตุ</th></tr></thead>
+        <tbody>
+        {% for m in g.matches %}
+          {% set rt = result_text(m) %}
+          <tr><td class="text-center">{{ m.match_no }}</td><td>{{ m.team_a.name }}</td><td class="score-text">{{ rt }}</td><td>{{ m.team_b.name }}</td><td>{{ m.note or '' }}</td></tr>
+        {% else %}<tr><td colspan="5" class="text-center-muted">ยังไม่มีโปรแกรม</td></tr>{% endfor %}
+        </tbody>
+      </table>
+      <div class="small-note">ตารางคะแนนกลุ่ม {{ g.group.name }}</div>
+      <table class="table table-bordered table-sm">
+        <thead><tr><th>อันดับ</th><th>ทีม</th><th>แข่ง</th><th>ชนะ</th><th>เสมอ</th><th>แพ้</th><th>ได้</th><th>เสีย</th><th>แต้ม</th></tr></thead>
+        <tbody>
+        {% for row in g.standings %}
+          <tr><td class="text-center">{{ row.rank }}</td><td>{{ row.team.name }}</td><td class="text-center">{{ row.played }}</td><td class="text-center">{{ row.wins }}</td><td class="text-center">{{ row.draws }}</td><td class="text-center">{{ row.losses }}</td><td class="text-center">{{ row.goals_for }}</td><td class="text-center">{{ row.goals_against }}</td><td class="text-center"><b>{{ row.points }}</b></td></tr>
+        {% else %}<tr><td colspan="9" class="text-center-muted">ยังไม่มีอันดับ</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    {% endfor %}
+
+    <div class="section-title">เส้นทางรอบต่อไป</div>
+    {% for r in section.next_round_preview.rounds %}
+      <div class="route-box">
+        <div class="route-title">{{ r.name }}</div>
+        {% for pair in r.matches %}
+        <div class="route-item"><span>คู่ {{ pair.match_no }}</span><b>{{ pair.a.team or pair.a.label }}</b><span>พบ</span><b>{{ pair.b.team or pair.b.label }}</b></div>
+        {% endfor %}
+      </div>
+    {% else %}<div class="text-center-muted">ไม่มีรอบต่อไป</div>{% endfor %}
+  </section>
+  {% endfor %}
+
+  {% for section in ko_sections %}
+  {% set comp = section.comp %}
+  <section class="sheet">
+    <div class="page-title">สาย Knockout {{ comp.name }}</div>
+    <div class="text-center muted mb-3">{{ comp.sport_division.label if comp.sport_division else 'ไม่ระบุชนิดกีฬา' }}</div>
+    {% for r in section.rounds %}
+      <div class="sub-title">{{ r.round_name }}</div>
+      <table class="table table-bordered">
+        <thead><tr><th style="width:60px">คู่ที่</th><th>ทีม A</th><th style="width:120px">ผล</th><th>ทีม B</th><th>ผู้ชนะ</th></tr></thead>
+        <tbody>
+        {% for m in r.matches %}
+          {% set rt = result_text(m) %}
+          <tr><td class="text-center">{{ m.match_no }}</td><td>{{ m.team_a.name if m.team_a else 'รอผู้ชนะ/BYE' }}</td><td class="score-text">{{ rt }}</td><td>{{ m.team_b.name if m.team_b else 'รอผู้ชนะ/BYE' }}</td><td>{{ m.winner_team.name if m.winner_team else '' }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}<div class="text-center-muted">ยังไม่มีสาย Knockout</div>{% endfor %}
+
+    {% if section.future_preview and section.future_preview.rounds %}
+    <div class="section-title">เส้นทางสาย Knockout ต่อจากรอบแรก</div>
+    {% for r in section.future_preview.rounds %}
+      <div class="route-box"><div class="route-title">{{ r.name }}</div>{% for pair in r.matches %}<div class="route-item"><span>คู่ {{ pair.match_no }}</span><b>{{ pair.a.label }}</b><span>พบ</span><b>{{ pair.b.label }}</b></div>{% endfor %}</div>
+    {% endfor %}
+    {% endif %}
+  </section>
+  {% endfor %}
+
+  <section class="sheet">
+    <div class="page-title">กีฬาจัดอันดับ / กิจกรรมประกวด / ตารางเหรียญ</div>
+    <div class="section-title">กีฬาจัดอันดับ</div>
+    {% for section in ranking_sections %}
+      <div class="sub-title">{{ section.comp.name }}</div>
+      <table class="table table-bordered"><thead><tr><th>อันดับ</th><th>ทีม/ผู้แข่งขัน</th><th>เวลา</th><th>ระยะ</th><th>คะแนน</th><th>หมายเหตุ</th></tr></thead><tbody>{% for r in section.results %}<tr><td class="text-center">{{ r.rank or '' }}</td><td>{{ r.competitor_name or (r.team.name if r.team else '') }}</td><td>{{ r.time_value or '' }}</td><td>{{ r.distance_value or '' }}</td><td>{{ r.score_value or '' }}</td><td>{{ r.note or '' }}</td></tr>{% else %}<tr><td colspan="6" class="text-center-muted">ยังไม่มีผล</td></tr>{% endfor %}</tbody></table>
+    {% else %}<div class="text-center-muted">ยังไม่มีรายการจัดอันดับ</div>{% endfor %}
+
+    <div class="section-title">กิจกรรมประกวด</div>
+    {% for section in contest_sections %}
+      <div class="sub-title">{{ section.comp.name }}</div>
+      <div class="small-note">กรรมการ: {% for j in section.judges %}{{ j.name }}{% if j.position %} ({{ j.position }}){% endif %}{% if not loop.last %}, {% endif %}{% else %}-{% endfor %}</div>
+      <table class="table table-bordered"><thead><tr><th>อันดับ</th><th>ทีม</th><th>คะแนน</th></tr></thead><tbody>{% for r in section.results %}<tr><td class="text-center">{{ r.rank or '' }}</td><td>{{ r.team.name if r.team else '' }}</td><td class="text-center">{{ '%.2f'|format(r.total_score or 0) }}</td></tr>{% else %}<tr><td colspan="3" class="text-center-muted">ยังไม่มีผล</td></tr>{% endfor %}</tbody></table>
+    {% else %}<div class="text-center-muted">ยังไม่มีกิจกรรมประกวด</div>{% endfor %}
+
+    <div class="section-title">ตารางเหรียญ/คะแนนรวม</div>
+    <table class="table table-bordered text-center"><thead><tr><th>อันดับ</th><th class="text-start">ทีม</th><th>ทอง</th><th>เงิน</th><th>ทองแดง</th></tr></thead><tbody>{% for row in medal_rows %}<tr><td>{{ loop.index }}</td><td class="text-start">{{ row.team.name }}</td><td>{{ row.gold }}</td><td>{{ row.silver }}</td><td>{{ row.bronze }}</td></tr>{% else %}<tr><td colspan="5" class="text-center-muted">ยังไม่มีผลเหรียญ</td></tr>{% endfor %}</tbody></table>
+
+    <div class="signature"><div class="box"><div>ลงชื่อ................................................</div><div class="mt-1">ผู้รับผิดชอบการจัดการแข่งขัน</div><div class="small-note mt-2">พิมพ์จากระบบ KRURUK SPORTS</div></div></div>
+  </section>
+</div>
+</body>
+</html>

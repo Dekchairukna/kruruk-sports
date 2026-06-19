@@ -1,0 +1,61 @@
+{% extends 'base.html' %}
+{% block title %}พิมพ์เกียรติบัตร · {{ team.name }}{% endblock %}
+{% block page_title %}พิมพ์เกียรติบัตร · {{ team.name }}{% endblock %}
+{% block content %}
+<div class="container py-4">
+  <div class="card soft-card mb-4 border-0 shadow-sm">
+    <div class="card-body p-4">
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+        <div class="d-flex gap-3 align-items-center">
+          <div class="team-color" style="background: {{ team.color_hex }}"></div>
+          <div>
+            <div class="text-muted small">{{ event.name }}</div>
+            <h3 class="mb-1">เกียรติบัตรของ {{ team.name }}</h3>
+            <div class="text-muted">ครูประจำสีพิมพ์เฉพาะรายการของทีม/สีนี้</div>
+          </div>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+          <a class="btn btn-light" href="{{ url_for('team_portal_profile', team_id=team.id) }}">กลับข้อมูลทีม</a>
+          <a class="btn btn-outline-secondary" href="{{ url_for('team_entry') }}">เปลี่ยนรหัสทีม</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card soft-card">
+    <div class="card-body p-4">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <h5 class="mb-0"><i class="bi bi-award"></i> รายการที่พิมพ์ได้</h5>
+          <div class="text-muted small">รายการจะขึ้นเมื่อแอดมินดึงผลการแข่งขันมาสร้างเกียรติบัตรแล้ว</div>
+        </div>
+        <span class="badge bg-primary-subtle text-primary">{{ certs|length }} ใบ</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead><tr><th>ชื่อบนเกียรติบัตร</th><th>รางวัล</th><th>รายการแข่งขัน</th><th>ออกเมื่อ</th><th></th></tr></thead>
+          <tbody>
+          {% for cert in certs %}
+          <tr>
+            <td><b>{{ cert.full_name }}</b><div class="text-muted small">{{ cert.role_text or '' }}</div></td>
+            <td>{{ cert.award_text or '-' }}</td>
+            <td>{{ cert.sport_text or '-' }}</td>
+            <td>{{ cert.issued_at.strftime('%d/%m/%Y') if cert.issued_at else '-' }}</td>
+            <td class="text-end">
+              <a class="btn btn-primary btn-sm" target="_blank" href="{{ url_for('certificate_print', recipient_id=cert.id) }}"><i class="bi bi-printer"></i> พิมพ์</a>
+              <a class="btn btn-outline-success btn-sm" target="_blank" href="{{ url_for('certificate_verify', verify_code=cert.verify_code) }}">QR</a>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-5">
+            ยังไม่มีเกียรติบัตรของทีมนี้<br>
+            <span class="small">ให้แอดมินเข้าเมนู Certificate แล้วกด “ดึงผลและสร้างเกียรติบัตร” หลังบันทึกผลการแข่งขันเสร็จ</span>
+          </td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

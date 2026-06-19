@@ -1,21 +1,35 @@
 {% extends 'base.html' %}
 {% block page_title %}{{ 'แก้ไขงานแข่งขัน' if event else 'สร้างงานแข่งขัน' }}{% endblock %}
 {% block content %}
-<div class="card soft-card"><div class="card-body">
+<div class="card soft-card event-form-card"><div class="card-body p-4">
+  <div class="mb-4">
+    <span class="hero-badge text-dark bg-light"><i class="bi bi-stars"></i> ทดลองใช้</span>
+    <h3 class="mt-2 mb-1">{{ 'แก้ไขงานแข่งขัน' if event else 'สร้างงานแข่งขันใหม่' }}</h3>
+    <div class="text-muted">เลือกบริบทของงานตรงนี้ ระบบจะบันทึกไว้ใช้ครั้งต่อไป ไม่ต้องให้ลูกค้าไปสร้างองค์กรเอง</div>
+  </div>
 <form method="post" enctype="multipart/form-data">
   <div class="row g-3">
-    <div class="col-md-6"><label class="form-label">องค์กร</label><select class="form-select" name="organization_id" required>{% for org in orgs %}<option value="{{ org.id }}" {{ 'selected' if event and event.organization_id==org.id else '' }}>{{ org.name }}</option>{% endfor %}</select></div>
-    <div class="col-md-6"><label class="form-label">ชื่องานแข่งขัน</label><input class="form-control" name="name" value="{{ event.name if event else '' }}" required></div>
-    <div class="col-md-3"><label class="form-label">ปีการศึกษา/ปีแข่งขัน</label><input class="form-control" name="competition_year" value="{{ event.competition_year if event else '' }}"></div>
+    {% if event %}
+    <div class="col-md-6"><label class="form-label">บริบทเดิม</label><select class="form-select" name="organization_id" required>{% for org in orgs %}<option value="{{ org.id }}" {{ 'selected' if event and event.organization_id==org.id else '' }}>{{ org.org_type }} · {{ org.name }}</option>{% endfor %}</select></div>
+    {% else %}
+    <div class="col-md-4"><label class="form-label">บริบทงาน</label><select class="form-select" name="org_type"><option>โรงเรียน</option><option>กลุ่มโรงเรียน</option><option>อบต./เทศบาล</option><option>องค์กร/บริษัท</option><option>ชมรม/สมาคม</option><option>อื่น ๆ</option></select></div>
+    <div class="col-md-8"><label class="form-label">ชื่อหน่วยงาน/สนาม/เจ้าภาพ</label><input class="form-control" name="context_name" list="known-orgs" placeholder="เช่น กลุ่มโรงเรียนน้ำพองสะอาด" required>
+      <datalist id="known-orgs">{% for org in orgs %}<option value="{{ org.name }}">{{ org.org_type }}</option>{% endfor %}</datalist>
+    </div>
+    {% endif %}
+    <div class="col-md-8"><label class="form-label">ชื่องานแข่งขัน</label><input class="form-control" name="name" value="{{ event.name if event else '' }}" placeholder="เช่น กีฬากลุ่มโรงเรียนน้ำพองสะอาด" required></div>
+    <div class="col-md-4"><label class="form-label">ปีการศึกษา/ปีแข่งขัน</label><input class="form-control" name="competition_year" value="{{ event.competition_year if event else '' }}"></div>
     <div class="col-md-3"><label class="form-label">วันที่เริ่ม</label><input class="form-control" name="start_date" type="date" value="{{ event.start_date if event and event.start_date else '' }}"></div>
     <div class="col-md-3"><label class="form-label">วันที่สิ้นสุด</label><input class="form-control" name="end_date" type="date" value="{{ event.end_date if event and event.end_date else '' }}"></div>
-    <div class="col-md-3"><label class="form-label">สถานะ</label><select class="form-select" name="status">{% for s in ['draft','open','closed','archived'] %}<option value="{{ s }}" {{ 'selected' if event and event.status==s else '' }}>{{ s }}</option>{% endfor %}</select></div>
-    <div class="col-md-8"><label class="form-label">สถานที่</label><input class="form-control" name="location" value="{{ event.location if event else '' }}"></div>
-    <div class="col-md-4"><label class="form-label">สีธีมงาน</label><input class="form-control form-control-color w-100" name="theme_color" type="color" value="{{ event.theme_color if event else '#4f46e5' }}"></div>
-    <div class="col-md-12"><label class="form-label">โลโก้งาน</label><input class="form-control" name="logo" type="file" accept="image/*"></div>
+    <div class="col-md-3"><label class="form-label">สถานะ</label><select class="form-select" name="status">{% for s in ['draft','open','closed','archived'] %}<option value="{{ s }}" {{ 'selected' if (event and event.status==s) or (not event and s=='open') else '' }}>{{ s }}</option>{% endfor %}</select></div>
+    <div class="col-md-3"><label class="form-label">สีธีมงาน</label><input class="form-control form-control-color w-100" name="theme_color" type="color" value="{{ event.theme_color if event else '#38bdf8' }}"></div>
+    <div class="col-md-8"><label class="form-label">สถานที่</label><input class="form-control" name="location" value="{{ event.location if event else '' }}" placeholder="เช่น โรงเรียน / สนามกีฬา / อบต."></div>
+    <div class="col-md-4"><label class="form-label">โลโก้งาน</label><input class="form-control" name="logo" type="file" accept="image/*"></div>
   </div>
-  <button class="btn btn-primary mt-4">บันทึก</button>
-  <a class="btn btn-light mt-4" href="{{ url_for('events') }}">กลับ</a>
+  <div class="d-flex flex-wrap gap-2 mt-4">
+    <button class="btn btn-primary btn-lg"><i class="bi bi-check-circle"></i> บันทึกและไปต่อ</button>
+    <a class="btn btn-light btn-lg" href="{{ url_for('dashboard') }}">กลับแดชบอร์ด</a>
+  </div>
 </form>
 </div></div>
 {% endblock %}

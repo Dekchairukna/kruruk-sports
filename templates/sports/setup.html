@@ -1,150 +1,357 @@
 {% extends 'base.html' %}
-{% block page_title %}Sport Setup · {{ event.name }}{% endblock %}
+{% block page_title %}ตั้งค่ากีฬา · {{ event.name }}{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
+<style>
+  .wizard-hero{background:linear-gradient(135deg,#eef2ff,#ecfeff);border:1px solid #dbeafe;border-radius:24px;padding:18px}
+  .wizard-step{display:flex;gap:10px;align-items:flex-start;margin-bottom:12px}.wizard-step .num{width:32px;height:32px;border-radius:999px;background:#4f46e5;color:#fff;display:grid;place-items:center;font-weight:800;flex:0 0 32px}.quick-chip{border:1px solid #dbeafe;background:#fff;border-radius:999px;padding:7px 12px;font-size:13px}.quick-chip:hover{background:#eef2ff}.helper-box{background:#f8fafc;border:1px dashed #cbd5e1;border-radius:16px;padding:12px}.mini-summary{background:#fff;border:1px solid #e5e7eb;border-radius:18px;padding:13px}.mini-summary b{font-size:1.35rem}.advanced-wrap{border:1px solid #e5e7eb;border-radius:22px;background:#fff}.sticky-actions{position:sticky;bottom:12px;z-index:2;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border:1px solid #e5e7eb;border-radius:18px;padding:10px}
+</style>
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
   <div>
-    <h4 class="mb-0">ตั้งค่าชนิดกีฬา / รุ่น / เพศ</h4>
-    <div class="text-muted small">เพิ่ม-แก้ไข Sport, รุ่นแข่งขัน, เพศ และรูปแบบบันทึกผลได้จากหน้านี้</div>
+    <h4 class="mb-1">คลังกีฬาในอีเว้นท์</h4>
+    <div class="text-muted small">หน้านี้คือคลังกีฬาและค่าเริ่มต้นกติกา ยังไม่ใช่การสร้างการแข่งขันจริง หลังมีคลังแล้วให้ไปหน้า “สร้างการแข่งขัน”</div>
   </div>
-  <div class="d-flex gap-2">
-    <form method="post" action="{{ url_for('sport_seed_defaults', event_id=event.id) }}" onsubmit="return confirm('อัปเดตชนิดกีฬา/รุ่น/วิธีบันทึกผลให้ตรงกับกีฬาแต่ละชนิด? ระบบจะไม่ลบผลเดิม')">
-      <button class="btn btn-outline-success"><i class="bi bi-magic"></i> สร้าง/อัปเดตชุดกีฬาให้ถูกชนิด</button>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-primary" href="{{ url_for('event_competition_wizard', event_id=event.id) }}"><i class="bi bi-plus-circle"></i> สร้างการแข่งขันจริง</a>
+    <form method="post" action="{{ url_for('sport_seed_defaults', event_id=event.id) }}" onsubmit="return confirm('ล้างคลังกีฬาตัวอย่างเดิม แล้วสร้างชุดกีฬามาตรฐานล่าสุดใหม่ใช่ไหม? การแข่งขันที่สร้างไว้จะยังอยู่ แต่จะไม่ผูกกับรายการย่อยเดิม')">
+      <button class="btn btn-outline-secondary"><i class="bi bi-magic"></i> ล้างคลังเดิม + สร้างชุดล่าสุด</button>
     </form>
     <a class="btn btn-light" href="{{ url_for('event_detail', event_id=event.id) }}">กลับงานแข่งขัน</a>
   </div>
 </div>
 
-<div class="alert alert-info py-2">
-  <b>แก้บั๊กแล้ว:</b> รายการที่เคยมีแค่เพิ่ม/ลบ ตอนนี้กด “แก้” เพื่อปรับชื่อ กีฬา รุ่น เพศ ระบบแข่ง และวิธีบันทึกผลได้แล้ว
+<div class="row g-3 mb-3">
+  <div class="col-md-4"><div class="mini-summary"><div class="text-muted small">หมวดกีฬา</div><b>{{ categories|length }}</b> <span class="small text-muted">หมวด</span></div></div>
+  <div class="col-md-4"><div class="mini-summary"><div class="text-muted small">ชนิดกีฬา</div><b>{{ sports|length }}</b> <span class="small text-muted">ชนิด</span></div></div>
+  <div class="col-md-4"><div class="mini-summary"><div class="text-muted small">รายการที่เปิดรับสมัคร</div><b>{{ divisions|length }}</b> <span class="small text-muted">รายการย่อย</span></div></div>
 </div>
 
-<div class="row g-3 mb-4">
-  <div class="col-lg-4" id="sport-setup-categories">
-    <div class="card soft-card h-100"><div class="card-body">
-      <h5>1) หมวดกีฬา</h5>
-      <form method="post" action="{{ url_for('sport_category_add', event_id=event.id) }}" class="row g-2">
-        <div class="col-12"><input class="form-control" name="name" placeholder="เช่น กรีฑา / กีฬาทีม / กีฬาพื้นบ้าน" required></div>
-        <div class="col-8"><input class="form-control" name="description" placeholder="คำอธิบาย"></div>
-        <div class="col-4"><input class="form-control" type="number" name="sort_order" placeholder="ลำดับ"></div>
-        <div class="col-12"><button class="btn btn-primary w-100">เพิ่มหมวด</button></div>
-      </form>
-      <hr>
-      {% for c in categories %}
-      <div class="border rounded p-2 mb-2" id="category-{{ c.id }}">
-        <div class="d-flex justify-content-between align-items-start gap-2">
-          <div><b>{{ c.name }}</b><div class="text-muted small">{{ c.description or '-' }} · ลำดับ {{ c.sort_order or 0 }}</div></div>
-          <div class="d-flex gap-1">
-            <button class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#edit-category-{{ c.id }}" type="button">แก้</button>
-            <form method="post" action="{{ url_for('sport_category_delete', category_id=c.id) }}" onsubmit="return confirm('ลบหมวดนี้? กีฬาในหมวดจะถูกลบด้วย')"><button class="btn btn-sm btn-outline-danger">ลบ</button></form>
+<div class="alert alert-info border-0 shadow-sm mb-3">
+  <b>Flow ที่ควรใช้:</b> สร้างอีเว้นท์ → สร้างทีม/สี → กด <b>ล้างคลังเดิม + สร้างชุดล่าสุด</b> เพื่อแทนที่ชนิดกีฬาเก่าด้วยชุดกติกาล่าสุด → ไปหน้า <b>สร้างการแข่งขันจริง</b> เพื่อเลือกกีฬาที่งานนี้จัด ดึงทีมทั้งหมดก่อน แล้วลบทีมที่ไม่ส่งออก
+</div>
+
+<div class="card soft-card mb-4" id="sport-wizard">
+  <div class="card-body">
+    <div class="wizard-hero mb-3">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+          <h5 class="mb-1"><i class="bi bi-plus-circle"></i> ปรับ/เพิ่มคลังกีฬาขั้นสูง</h5>
+          <div class="text-muted small">ใช้เฉพาะกรณีต้องเพิ่มหรือแก้ชนิดกีฬา/รุ่นในคลังเอง ไม่ใช่ขั้นตอนสร้างการแข่งขันจริง</div>
+        </div>
+        <span class="badge bg-secondary">ขั้นสูง</span>
+      </div>
+    </div>
+
+    <form method="post" action="{{ url_for('sport_quick_add', event_id=event.id) }}" class="row g-3" id="quickSportForm">
+      <input type="hidden" name="category_preset" id="quickCategoryPreset">
+      <div class="col-lg-4">
+        <div class="wizard-step"><div class="num">1</div><div class="w-100">
+          <label class="form-label fw-semibold">เลือกกีฬาเดิม หรือเพิ่มกีฬาใหม่</label>
+          <select class="form-select mb-2" name="sport_id" id="quickSportId">
+            <option value="">+ เพิ่มชนิดกีฬาใหม่</option>
+            {% for s in sports %}
+              <option value="{{ s.id }}" data-format="{{ s.default_format or 'ranking' }}" data-result="{{ s.result_type or 'score_only' }}" data-max-sets="{{ s.max_sets or '' }}" data-points="{{ s.points_per_set or '' }}" data-win="{{ s.sets_to_win or '' }}" data-category="{{ s.category_id or '' }}">{{ s.name }}</option>
+            {% endfor %}
+          </select>
+          <input class="form-control" name="sport_name" id="quickSportName" placeholder="ชื่อกีฬาใหม่ เช่น ฟุตบอล / เปตอง / ชักเย่อ">
+          <div class="form-text">ถ้าเลือกกีฬาเดิม ช่องชื่อกีฬาใหม่เว้นว่างได้</div>
+        </div></div>
+
+        <div class="helper-box mt-3">
+          <div class="small fw-semibold mb-2">ปุ่มลัดตั้งค่าอัตโนมัติ</div>
+          <div class="d-flex flex-wrap gap-2">
+            <button type="button" class="quick-chip preset-btn" data-sport="ฟุตบอล" data-category="กีฬาทีม" data-format="round_robin" data-result="score_only">ฟุตบอล</button>
+            <button type="button" class="quick-chip preset-btn" data-sport="ฟุตซอล" data-category="กีฬาทีม" data-format="round_robin" data-result="score_only">ฟุตซอล</button>
+            <button type="button" class="quick-chip preset-btn" data-sport="วอลเลย์บอล" data-category="กีฬาทีม" data-format="round_robin" data-result="set_based" data-max-sets="5" data-points="25" data-win="3">วอลเลย์บอล</button>
+            <button type="button" class="quick-chip preset-btn" data-sport="เซปักตะกร้อ" data-category="กีฬาทีม" data-format="round_robin" data-result="set_based" data-max-sets="3" data-points="15" data-win="2">ตะกร้อ</button>
+            <button type="button" class="quick-chip preset-btn" data-sport="เปตอง" data-category="กีฬาเฉพาะทาง" data-format="knockout" data-result="score_only">เปตอง</button>
+            <button type="button" class="quick-chip preset-btn" data-sport="ชู้ตติ้งเปตอง" data-category="กีฬาเฉพาะทาง" data-format="shooting" data-result="score_only">ชู้ตติ้ง</button>
+            <button type="button" class="quick-chip preset-btn" data-sport="กรีฑา" data-category="กรีฑา" data-format="ranking" data-result="ranking">กรีฑา/วิ่ง</button>
+            <button type="button" class="quick-chip preset-btn" data-sport="ชักเย่อ" data-category="กีฬาพื้นบ้าน" data-format="knockout" data-result="set_based" data-max-sets="3" data-points="0" data-win="2">ชักเย่อ</button>
+            <button type="button" class="quick-chip preset-btn" data-sport="ประกวดกองเชียร์" data-category="กิจกรรมประกวด" data-format="score_judging" data-result="contest">ประกวด/กรรมการ</button>
           </div>
         </div>
-        <form class="collapse mt-2 row g-2" id="edit-category-{{ c.id }}" method="post" action="{{ url_for('sport_category_update', category_id=c.id) }}">
-          <div class="col-12"><input class="form-control form-control-sm" name="name" value="{{ c.name }}" required></div>
-          <div class="col-8"><input class="form-control form-control-sm" name="description" value="{{ c.description or '' }}" placeholder="คำอธิบาย"></div>
-          <div class="col-4"><input class="form-control form-control-sm" type="number" name="sort_order" value="{{ c.sort_order or 0 }}"></div>
-          <div class="col-12"><button class="btn btn-sm btn-primary w-100">บันทึกหมวด</button></div>
-        </form>
       </div>
-      {% else %}<div class="empty-box small">ยังไม่มีหมวดกีฬา</div>{% endfor %}
-    </div></div>
-  </div>
 
-  <div class="col-lg-4">
-    <div class="card soft-card h-100"><div class="card-body">
-      <h5>2) ชนิดกีฬา</h5>
-      <form method="post" action="{{ url_for('sport_add', event_id=event.id) }}" class="row g-2">
-        <div class="col-12"><input class="form-control" name="name" placeholder="เช่น วิ่ง 50 เมตร / ฟุตซอล / ชักเย่อ" required></div>
-        <div class="col-12"><select class="form-select" name="category_id"><option value="">ไม่ระบุหมวด</option>{% for c in categories %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select></div>
-        <div class="col-12"><select class="form-select" name="default_format">
-          <option value="ranking">Ranking / อันดับเวลา</option><option value="round_robin">Round Robin / พบกันหมด</option><option value="knockout">Knockout</option><option value="double_knockout">Double Knockout</option><option value="swiss">Swiss</option><option value="tournoi">Tournoi Petanque</option><option value="shooting">Shooting</option><option value="score_judging">Score Judging / กรรมการให้คะแนน</option>
-        </select></div>
-        <div class="col-12"><select class="form-select" name="result_type">
-          <option value="score_only">Score Only / คะแนนรวม เช่น ฟุตบอล ฟุตซอล</option><option value="set_based">Set Based / คะแนนรายเซต เช่น วอลเลย์บอล ตะกร้อ</option><option value="ranking">Ranking / อันดับ เวลา ระยะ</option><option value="contest">Contest / กรรมการให้คะแนน</option>
-        </select></div>
-        <div class="col-4"><input class="form-control" type="number" name="max_sets" placeholder="เซตสูงสุด"></div>
-        <div class="col-4"><input class="form-control" type="number" name="points_per_set" placeholder="แต้ม/เซต"></div>
-        <div class="col-4"><input class="form-control" type="number" name="sets_to_win" placeholder="ชนะกี่เซต"></div>
-        <div class="col-12"><textarea class="form-control" name="note" rows="2" placeholder="หมายเหตุ"></textarea></div>
-        <div class="col-12"><button class="btn btn-primary w-100">เพิ่มชนิดกีฬา</button></div>
-      </form>
-    </div></div>
-  </div>
+      <div class="col-lg-4">
+        <div class="wizard-step"><div class="num">2</div><div class="w-100">
+          <label class="form-label fw-semibold">หมวดและรูปแบบแข่งขัน</label>
+          <select class="form-select mb-2" name="category_id" id="quickCategoryId">
+            <option value="">ให้ระบบสร้าง/ไม่ระบุหมวด</option>
+            {% for c in categories %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+          </select>
+          <input class="form-control mb-2" name="category_name" id="quickCategoryName" placeholder="หมวดใหม่ เช่น กีฬาทีม / กรีฑา / กีฬาพื้นบ้าน">
+          <select class="form-select mb-2" name="competition_format" id="quickCompetitionFormat">
+            <option value="ranking">จัดอันดับ / เวลา / ระยะ</option>
+            <option value="round_robin">พบกันหมด</option>
+            <option value="knockout">แพ้คัดออก</option>
+            <option value="double_knockout">แพ้สองครั้งตกรอบ</option>
+            <option value="swiss">Swiss</option>
+            <option value="tournoi">Tournoi Petanque</option>
+            <option value="shooting">Shooting</option>
+            <option value="score_judging">กรรมการให้คะแนน</option>
+          </select>
+          <select class="form-select" name="result_type" id="quickResultType">
+            <option value="score_only">บันทึกคะแนนรวม เช่น ฟุตบอล/เปตอง</option>
+            <option value="set_based">บันทึกคะแนนรายเซต เช่น วอลเลย์บอล/ตะกร้อ</option>
+            <option value="ranking">บันทึกอันดับ เวลา หรือระยะ เช่น กรีฑา</option>
+            <option value="contest">บันทึกคะแนนกรรมการ เช่น กองเชียร์/ประกวด</option>
+          </select>
+        </div></div>
 
-  <div class="col-lg-4">
-    <div class="card soft-card h-100"><div class="card-body">
-      <h5>3) รุ่นแข่งขัน + เพศ</h5>
-      <form method="post" action="{{ url_for('sport_division_add', event_id=event.id) }}" class="row g-2">
-        <div class="col-12"><select class="form-select" name="sport_id" required><option value="">เลือกชนิดกีฬา</option>{% for s in sports %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select></div>
-        <div class="col-12"><textarea class="form-control" name="class_name" rows="2" placeholder="รุ่น เช่น อนุบาล, ป.1, ป.2" required></textarea><div class="form-text">ใส่หลายรุ่นได้ คั่นด้วย comma หรือขึ้นบรรทัดใหม่</div></div>
-        <div class="col-12"><label class="form-label small mb-1">เพศ</label><br>{% for g in ['ชาย','หญิง','ผสม'] %}<label class="me-3"><input type="checkbox" name="gender" value="{{ g }}" {% if g!='ผสม' %}checked{% endif %}> {{ g }}</label>{% endfor %}</div>
-        <div class="col-12"><select class="form-select" name="competition_format"><option value="ranking">Ranking / อันดับเวลา</option><option value="round_robin">Round Robin / พบกันหมด</option><option value="knockout">Knockout</option><option value="double_knockout">Double Knockout</option><option value="swiss">Swiss</option><option value="tournoi">Tournoi Petanque</option><option value="shooting">Shooting</option><option value="score_judging">Score Judging</option></select></div>
-        <div class="col-12"><select class="form-select" name="result_type"><option value="score_only">Score Only / คะแนนรวม</option><option value="set_based">Set Based / คะแนนรายเซต</option><option value="ranking">Ranking / อันดับ เวลา ระยะ</option><option value="contest">Contest / กรรมการให้คะแนน</option></select></div>
-        <div class="col-4"><input class="form-control" type="number" name="max_sets" placeholder="เซตสูงสุด"></div><div class="col-4"><input class="form-control" type="number" name="points_per_set" placeholder="แต้ม/เซต"></div><div class="col-4"><input class="form-control" type="number" name="sets_to_win" placeholder="ชนะกี่เซต"></div>
-        <div class="col-12"><input class="form-control" type="number" name="max_athletes_per_team" placeholder="จำกัดนักกีฬาต่อทีม"></div>
-        <div class="col-12"><button class="btn btn-primary w-100">เพิ่มรายการย่อย</button></div>
-      </form>
-    </div></div>
+        <div class="row g-2 mt-1 js-set-fields d-none">
+          <div class="col-4"><input class="form-control" type="number" name="max_sets" id="quickMaxSets" placeholder="เซตสูงสุด"></div>
+          <div class="col-4"><input class="form-control" type="number" name="points_per_set" id="quickPoints" placeholder="แต้ม/เซต"></div>
+          <div class="col-4"><input class="form-control" type="number" name="sets_to_win" id="quickWin" placeholder="ชนะกี่เซต"></div>
+        </div>
+        <textarea class="form-control mt-2" name="note" rows="2" placeholder="หมายเหตุ เช่น แข่งสนามกลาง / นับเวลา / ใช้กติกาพิเศษ"></textarea>
+      </div>
+
+      <div class="col-lg-4">
+        <div class="wizard-step"><div class="num">3</div><div class="w-100">
+          <label class="form-label fw-semibold">รุ่นแข่งขันและเพศ</label>
+          <textarea class="form-control" name="class_name" id="quickClassName" rows="4" placeholder="ใส่รุ่น เช่น&#10;ป.4&#10;ป.5&#10;ป.6 หรือ มัธยมต้น, มัธยมปลาย"></textarea>
+          <div class="form-text">ใส่หลายรุ่นได้ คั่นด้วย comma หรือขึ้นบรรทัดใหม่ ถ้าเว้นว่างระบบจะใช้ Open</div>
+          <div class="d-flex flex-wrap gap-2 my-2">
+            <button type="button" class="quick-chip level-btn" data-levels="อนุบาล, ประถมต้น, ประถมปลาย">อนุบาล/ประถม</button>
+            <button type="button" class="quick-chip level-btn" data-levels="ป.1, ป.2, ป.3, ป.4, ป.5, ป.6">ป.1-ป.6</button>
+            <button type="button" class="quick-chip level-btn" data-levels="มัธยมต้น, มัธยมปลาย">มัธยม</button>
+            <button type="button" class="quick-chip level-btn" data-levels="Open">Open</button>
+          </div>
+          <div class="mb-2">
+            <label class="me-3"><input type="checkbox" name="gender" value="ชาย" checked> ชาย</label>
+            <label class="me-3"><input type="checkbox" name="gender" value="หญิง" checked> หญิง</label>
+            <label class="me-3"><input type="checkbox" name="gender" value="ผสม"> ผสม/ไม่แยกเพศ</label>
+          </div>
+          <input class="form-control" type="number" name="max_athletes_per_team" placeholder="จำกัดนักกีฬาต่อทีม เช่น 5 (เว้นว่างได้)">
+        </div></div>
+      </div>
+
+      <div class="col-12">
+        <div class="sticky-actions d-flex flex-wrap justify-content-between align-items-center gap-2">
+          <div class="small text-muted" id="quickPreview">ระบบจะสร้างชนิดกีฬาและรายการย่อยให้อัตโนมัติ</div>
+          <button class="btn btn-primary btn-lg"><i class="bi bi-check2-circle"></i> เพิ่มเข้าอีเว้นท์ครั้งเดียว</button>
+        </div>
+      </div>
+    </form>
   </div>
 </div>
 
-<div class="card soft-card mb-3"><div class="card-body">
-  <h5 class="mb-3">ชนิดกีฬาทั้งหมด</h5>
-  {% for s in sports %}
-  <div class="border rounded p-2 mb-2" id="sport-{{ s.id }}">
-    <div class="d-flex justify-content-between align-items-start gap-2">
-      <div><b>{{ s.name }}</b><div class="text-muted small">หมวด: {{ s.category.name if s.category else '-' }} · ระบบเริ่มต้น: {{ s.default_format }} · บันทึกผล: {{ s.result_type }}</div></div>
-      <div class="d-flex gap-1"><button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#edit-sport-{{ s.id }}">แก้</button><form method="post" action="{{ url_for('sport_delete', sport_id=s.id) }}" onsubmit="return confirm('ลบชนิดกีฬานี้? รุ่นแข่งขันในกีฬานี้จะถูกลบด้วย')"><button class="btn btn-sm btn-outline-danger">ลบ</button></form></div>
+<div class="advanced-wrap mb-4">
+  <div class="p-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <div>
+      <h5 class="mb-0">ตั้งค่าขั้นสูง</h5>
+      <div class="text-muted small">ใช้เมื่ออยากแยกจัดการหมวด กีฬา หรือรายการย่อยเอง</div>
     </div>
-    <form class="collapse mt-2 row g-2" id="edit-sport-{{ s.id }}" method="post" action="{{ url_for('sport_update', sport_id=s.id) }}">
-      <div class="col-md-4"><input class="form-control form-control-sm" name="name" value="{{ s.name }}" required></div>
-      <div class="col-md-3"><select class="form-select form-select-sm" name="category_id"><option value="">ไม่ระบุหมวด</option>{% for c in categories %}<option value="{{ c.id }}" {{ 'selected' if s.category_id==c.id else '' }}>{{ c.name }}</option>{% endfor %}</select></div>
-      <div class="col-md-2"><select class="form-select form-select-sm" name="default_format">{% for f in ['ranking','round_robin','knockout','double_knockout','swiss','tournoi','shooting','score_judging'] %}<option value="{{ f }}" {{ 'selected' if s.default_format==f else '' }}>{{ f }}</option>{% endfor %}</select></div>
-      <div class="col-md-3"><select class="form-select form-select-sm" name="result_type">{% for rt in ['score_only','set_based','ranking','contest'] %}<option value="{{ rt }}" {{ 'selected' if s.result_type==rt else '' }}>{{ rt }}</option>{% endfor %}</select></div>
-      <div class="col-md-2"><input class="form-control form-control-sm" type="number" name="max_sets" value="{{ s.max_sets or '' }}" placeholder="เซตสูงสุด"></div>
-      <div class="col-md-2"><input class="form-control form-control-sm" type="number" name="points_per_set" value="{{ s.points_per_set or '' }}" placeholder="แต้ม/เซต"></div>
-      <div class="col-md-2"><input class="form-control form-control-sm" type="number" name="sets_to_win" value="{{ s.sets_to_win or '' }}" placeholder="ชนะกี่เซต"></div>
-      <div class="col-md-4"><input class="form-control form-control-sm" name="note" value="{{ s.note or '' }}" placeholder="หมายเหตุ"></div>
-      <div class="col-md-2"><label class="small"><input type="checkbox" name="is_active" value="1" {{ 'checked' if s.is_active else '' }}> เปิดใช้</label></div>
-      <div class="col-md-12"><button class="btn btn-sm btn-primary">บันทึกชนิดกีฬา</button></div>
-    </form>
+    <button class="btn btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#advancedSportSetup"><i class="bi bi-sliders"></i> เปิด/ปิดขั้นสูง</button>
   </div>
-  {% else %}<div class="empty-box">ยังไม่มีชนิดกีฬา</div>{% endfor %}
-</div></div>
+  <div class="collapse" id="advancedSportSetup">
+    <div class="p-3 pt-0">
+      <div class="row g-3 mb-4">
+        <div class="col-lg-4" id="sport-setup-categories">
+          <div class="card soft-card h-100"><div class="card-body">
+            <h5>1) หมวดกีฬา</h5>
+            <form method="post" action="{{ url_for('sport_category_add', event_id=event.id) }}" class="row g-2">
+              <div class="col-12"><input class="form-control" name="name" placeholder="เช่น กรีฑา / กีฬาทีม / กีฬาพื้นบ้าน" required></div>
+              <div class="col-8"><input class="form-control" name="description" placeholder="คำอธิบาย"></div>
+              <div class="col-4"><input class="form-control" type="number" name="sort_order" placeholder="ลำดับ"></div>
+              <div class="col-12"><button class="btn btn-primary w-100">เพิ่มหมวด</button></div>
+            </form>
+            <hr>
+            {% for c in categories %}
+            <div class="border rounded p-2 mb-2" id="category-{{ c.id }}">
+              <div class="d-flex justify-content-between align-items-start gap-2">
+                <div><b>{{ c.name }}</b><div class="text-muted small">{{ c.description or '-' }} · ลำดับ {{ c.sort_order or 0 }}</div></div>
+                <div class="d-flex gap-1">
+                  <button class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#edit-category-{{ c.id }}" type="button">แก้</button>
+                  <form method="post" action="{{ url_for('sport_category_delete', category_id=c.id) }}" onsubmit="return confirm('ลบหมวดนี้? กีฬาในหมวดจะถูกลบด้วย')"><button class="btn btn-sm btn-outline-danger">ลบ</button></form>
+                </div>
+              </div>
+              <form class="collapse mt-2 row g-2" id="edit-category-{{ c.id }}" method="post" action="{{ url_for('sport_category_update', category_id=c.id) }}">
+                <div class="col-12"><input class="form-control form-control-sm" name="name" value="{{ c.name }}" required></div>
+                <div class="col-8"><input class="form-control form-control-sm" name="description" value="{{ c.description or '' }}" placeholder="คำอธิบาย"></div>
+                <div class="col-4"><input class="form-control form-control-sm" type="number" name="sort_order" value="{{ c.sort_order or 0 }}"></div>
+                <div class="col-12"><button class="btn btn-sm btn-primary w-100">บันทึกหมวด</button></div>
+              </form>
+            </div>
+            {% else %}<div class="empty-box small">ยังไม่มีหมวดกีฬา</div>{% endfor %}
+          </div></div>
+        </div>
 
-<div class="card soft-card"><div class="card-body">
-  <div class="d-flex justify-content-between align-items-center mb-3">
-    <h5 class="mb-0">รายการกีฬาที่เปิดรับสมัคร</h5>
-    <span class="badge bg-primary">{{ divisions|length }} รายการย่อย</span>
-  </div>
-  <div class="table-responsive">
-    <table class="table align-middle">
-      <thead><tr><th>หมวด</th><th>กีฬา</th><th>รุ่น</th><th>เพศ</th><th>ระบบแข่ง</th><th>บันทึกผล</th><th>เซต</th><th>จำกัด/ทีม</th><th></th></tr></thead>
-      <tbody>
-      {% for d in divisions %}
-        <tr id="division-{{ d.id }}">
-          <td>{{ d.sport.category.name if d.sport.category else '-' }}</td><td><b>{{ d.sport.name }}</b></td><td>{{ d.class_name }}</td><td>{{ d.gender }}</td><td><span class="badge bg-light text-dark">{{ d.competition_format }}</span></td><td><span class="badge bg-info-subtle text-dark">{{ d.result_type or d.sport.result_type }}</span></td><td>{% if (d.result_type or d.sport.result_type) == 'set_based' %}{{ d.max_sets or d.sport.max_sets }} เซต / ชนะ {{ d.sets_to_win or d.sport.sets_to_win }}{% else %}-{% endif %}</td><td>{{ d.max_athletes_per_team or '-' }}</td>
-          <td class="text-end"><button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#edit-division-{{ d.id }}">แก้</button> <form method="post" action="{{ url_for('sport_division_delete', division_id=d.id) }}" class="d-inline" onsubmit="return confirm('ลบรายการย่อยนี้?')"><button class="btn btn-sm btn-outline-danger">ลบ</button></form></td>
-        </tr>
-        <tr class="collapse" id="edit-division-{{ d.id }}"><td colspan="9">
-          <form method="post" action="{{ url_for('sport_division_update', division_id=d.id) }}" class="row g-2">
-            <div class="col-md-3"><select class="form-select form-select-sm" name="sport_id">{% for s in sports %}<option value="{{ s.id }}" {{ 'selected' if d.sport_id==s.id else '' }}>{{ s.name }}</option>{% endfor %}</select></div>
-            <div class="col-md-2"><input class="form-control form-control-sm" name="class_name" value="{{ d.class_name }}" required></div>
-            <div class="col-md-1"><select class="form-select form-select-sm" name="gender">{% for g in ['ชาย','หญิง','ผสม'] %}<option value="{{ g }}" {{ 'selected' if d.gender==g else '' }}>{{ g }}</option>{% endfor %}</select></div>
-            <div class="col-md-2"><select class="form-select form-select-sm" name="competition_format">{% for f in ['ranking','round_robin','knockout','double_knockout','swiss','tournoi','shooting','score_judging'] %}<option value="{{ f }}" {{ 'selected' if d.competition_format==f else '' }}>{{ f }}</option>{% endfor %}</select></div>
-            <div class="col-md-2"><select class="form-select form-select-sm" name="result_type">{% for rt in ['score_only','set_based','ranking','contest'] %}<option value="{{ rt }}" {{ 'selected' if d.result_type==rt else '' }}>{{ rt }}</option>{% endfor %}</select></div>
-            <div class="col-md-1"><input class="form-control form-control-sm" type="number" name="max_sets" value="{{ d.max_sets or '' }}" placeholder="เซต"></div>
-            <div class="col-md-1"><input class="form-control form-control-sm" type="number" name="sets_to_win" value="{{ d.sets_to_win or '' }}" placeholder="ชนะ"></div>
-            <div class="col-md-2"><input class="form-control form-control-sm" type="number" name="points_per_set" value="{{ d.points_per_set or '' }}" placeholder="แต้ม/เซต"></div>
-            <div class="col-md-2"><input class="form-control form-control-sm" type="number" name="max_athletes_per_team" value="{{ d.max_athletes_per_team or '' }}" placeholder="จำกัด/ทีม"></div>
-            <div class="col-md-2"><label class="small"><input type="checkbox" name="is_active" value="1" {{ 'checked' if d.is_active else '' }}> เปิดใช้</label></div>
-            <div class="col-md-2"><button class="btn btn-sm btn-primary w-100">บันทึกรายการย่อย</button></div>
+        <div class="col-lg-4">
+          <div class="card soft-card h-100"><div class="card-body">
+            <h5>2) ชนิดกีฬา</h5>
+            <form method="post" action="{{ url_for('sport_add', event_id=event.id) }}" class="row g-2">
+              <div class="col-12"><input class="form-control" name="name" placeholder="เช่น วิ่ง 50 เมตร / ฟุตซอล / ชักเย่อ" required></div>
+              <div class="col-12"><select class="form-select" name="category_id"><option value="">ไม่ระบุหมวด</option>{% for c in categories %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select></div>
+              <div class="col-12"><select class="form-select" name="default_format"><option value="ranking">Ranking / อันดับเวลา</option><option value="round_robin">Round Robin / พบกันหมด</option><option value="knockout">Knockout</option><option value="double_knockout">Double Knockout</option><option value="swiss">Swiss</option><option value="tournoi">Tournoi Petanque</option><option value="shooting">Shooting</option><option value="score_judging">Score Judging / กรรมการให้คะแนน</option></select></div>
+              <div class="col-12"><select class="form-select" name="result_type"><option value="score_only">Score Only / คะแนนรวม เช่น ฟุตบอล ฟุตซอล</option><option value="set_based">Set Based / คะแนนรายเซต เช่น วอลเลย์บอล ตะกร้อ</option><option value="ranking">Ranking / อันดับ เวลา ระยะ</option><option value="contest">Contest / กรรมการให้คะแนน</option></select></div>
+              <div class="col-4"><input class="form-control" type="number" name="max_sets" placeholder="เซตสูงสุด"></div>
+              <div class="col-4"><input class="form-control" type="number" name="points_per_set" placeholder="แต้ม/เซต"></div>
+              <div class="col-4"><input class="form-control" type="number" name="sets_to_win" placeholder="ชนะกี่เซต"></div>
+              <div class="col-12"><textarea class="form-control" name="note" rows="2" placeholder="หมายเหตุ"></textarea></div>
+              <div class="col-12"><button class="btn btn-primary w-100">เพิ่มชนิดกีฬา</button></div>
+            </form>
+          </div></div>
+        </div>
+
+        <div class="col-lg-4">
+          <div class="card soft-card h-100"><div class="card-body">
+            <h5>3) รุ่นแข่งขัน + เพศ</h5>
+            <form method="post" action="{{ url_for('sport_division_add', event_id=event.id) }}" class="row g-2">
+              <div class="col-12"><select class="form-select" name="sport_id" required><option value="">เลือกชนิดกีฬา</option>{% for s in sports %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select></div>
+              <div class="col-12"><textarea class="form-control" name="class_name" rows="2" placeholder="รุ่น เช่น อนุบาล, ป.1, ป.2" required></textarea><div class="form-text">ใส่หลายรุ่นได้ คั่นด้วย comma หรือขึ้นบรรทัดใหม่</div></div>
+              <div class="col-12"><label class="form-label small mb-1">เพศ</label><br>{% for g in ['ชาย','หญิง','ผสม'] %}<label class="me-3"><input type="checkbox" name="gender" value="{{ g }}" {% if g!='ผสม' %}checked{% endif %}> {{ g }}</label>{% endfor %}</div>
+              <div class="col-12"><select class="form-select" name="competition_format"><option value="ranking">Ranking / อันดับเวลา</option><option value="round_robin">Round Robin / พบกันหมด</option><option value="knockout">Knockout</option><option value="double_knockout">Double Knockout</option><option value="swiss">Swiss</option><option value="tournoi">Tournoi Petanque</option><option value="shooting">Shooting</option><option value="score_judging">Score Judging</option></select></div>
+              <div class="col-12"><select class="form-select" name="result_type"><option value="score_only">Score Only / คะแนนรวม</option><option value="set_based">Set Based / คะแนนรายเซต</option><option value="ranking">Ranking / อันดับ เวลา ระยะ</option><option value="contest">Contest / กรรมการให้คะแนน</option></select></div>
+              <div class="col-4"><input class="form-control" type="number" name="max_sets" placeholder="เซตสูงสุด"></div><div class="col-4"><input class="form-control" type="number" name="points_per_set" placeholder="แต้ม/เซต"></div><div class="col-4"><input class="form-control" type="number" name="sets_to_win" placeholder="ชนะกี่เซต"></div>
+              <div class="col-12"><input class="form-control" type="number" name="max_athletes_per_team" placeholder="จำกัดนักกีฬาต่อทีม"></div>
+              <div class="col-12"><button class="btn btn-primary w-100">เพิ่มรายการย่อย</button></div>
+            </form>
+          </div></div>
+        </div>
+      </div>
+
+      <div class="card soft-card mb-3"><div class="card-body">
+        <h5 class="mb-3">ชนิดกีฬาทั้งหมด</h5>
+        {% for s in sports %}
+        <div class="border rounded p-2 mb-2" id="sport-{{ s.id }}">
+          <div class="d-flex justify-content-between align-items-start gap-2">
+            <div><b>{{ s.name }}</b><div class="text-muted small">หมวด: {{ s.category.name if s.category else '-' }} · ระบบเริ่มต้น: {{ s.default_format }} · บันทึกผล: {{ s.result_type }}</div></div>
+            <div class="d-flex gap-1"><button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#edit-sport-{{ s.id }}">แก้</button><form method="post" action="{{ url_for('sport_delete', sport_id=s.id) }}" onsubmit="return confirm('ลบชนิดกีฬานี้? รุ่นแข่งขันในกีฬานี้จะถูกลบด้วย')"><button class="btn btn-sm btn-outline-danger">ลบ</button></form></div>
+          </div>
+          <form class="collapse mt-2 row g-2" id="edit-sport-{{ s.id }}" method="post" action="{{ url_for('sport_update', sport_id=s.id) }}">
+            <div class="col-md-4"><input class="form-control form-control-sm" name="name" value="{{ s.name }}" required></div>
+            <div class="col-md-3"><select class="form-select form-select-sm" name="category_id"><option value="">ไม่ระบุหมวด</option>{% for c in categories %}<option value="{{ c.id }}" {{ 'selected' if s.category_id==c.id else '' }}>{{ c.name }}</option>{% endfor %}</select></div>
+            <div class="col-md-2"><select class="form-select form-select-sm" name="default_format">{% for f in ['ranking','round_robin','knockout','double_knockout','swiss','tournoi','shooting','score_judging'] %}<option value="{{ f }}" {{ 'selected' if s.default_format==f else '' }}>{{ f }}</option>{% endfor %}</select></div>
+            <div class="col-md-3"><select class="form-select form-select-sm" name="result_type">{% for rt in ['score_only','set_based','ranking','contest'] %}<option value="{{ rt }}" {{ 'selected' if s.result_type==rt else '' }}>{{ rt }}</option>{% endfor %}</select></div>
+            <div class="col-md-2"><input class="form-control form-control-sm" type="number" name="max_sets" value="{{ s.max_sets or '' }}" placeholder="เซตสูงสุด"></div>
+            <div class="col-md-2"><input class="form-control form-control-sm" type="number" name="points_per_set" value="{{ s.points_per_set or '' }}" placeholder="แต้ม/เซต"></div>
+            <div class="col-md-2"><input class="form-control form-control-sm" type="number" name="sets_to_win" value="{{ s.sets_to_win or '' }}" placeholder="ชนะกี่เซต"></div>
+            <div class="col-md-4"><input class="form-control form-control-sm" name="note" value="{{ s.note or '' }}" placeholder="หมายเหตุ"></div>
+            <div class="col-md-2"><label class="small"><input type="checkbox" name="is_active" value="1" {{ 'checked' if s.is_active else '' }}> เปิดใช้</label></div>
+            <div class="col-md-12"><button class="btn btn-sm btn-primary">บันทึกชนิดกีฬา</button></div>
           </form>
-        </td></tr>
-      {% else %}
-        <tr><td colspan="9"><div class="empty-box">ยังไม่มีรายการย่อย ให้เพิ่มชนิดกีฬาและรุ่นก่อน หรือกด “สร้าง/อัปเดตชุดกีฬาให้ถูกชนิด”</div></td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
+        </div>
+        {% else %}<div class="empty-box">ยังไม่มีชนิดกีฬา</div>{% endfor %}
+      </div></div>
+    </div>
   </div>
-</div></div>
+</div>
+
+<div class="card soft-card">
+  <div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <div>
+        <h5 class="mb-0">รายการกีฬาที่เปิดรับสมัคร</h5>
+        <div class="text-muted small">นี่คือรายการที่ผู้สมัครจะเห็น เช่น ฟุตบอล / ป.5 / ชาย</div>
+      </div>
+      <span class="badge bg-primary">{{ divisions|length }} รายการย่อย</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table align-middle">
+        <thead><tr><th>หมวด</th><th>กีฬา</th><th>รุ่น</th><th>เพศ</th><th>ระบบแข่ง</th><th>บันทึกผล</th><th>เซต</th><th>จำกัด/ทีม</th><th></th></tr></thead>
+        <tbody>
+        {% for d in divisions %}
+          <tr id="division-{{ d.id }}">
+            <td>{{ d.sport.category.name if d.sport.category else '-' }}</td><td><b>{{ d.sport.name }}</b></td><td>{{ d.class_name }}</td><td>{{ d.gender }}</td><td><span class="badge bg-light text-dark">{{ d.competition_format }}</span></td><td><span class="badge bg-info-subtle text-dark">{{ d.result_type or d.sport.result_type }}</span></td><td>{% if (d.result_type or d.sport.result_type) == 'set_based' %}{{ d.max_sets or d.sport.max_sets }} เซต / ชนะ {{ d.sets_to_win or d.sport.sets_to_win }}{% else %}-{% endif %}</td><td>{{ d.max_athletes_per_team or '-' }}</td>
+            <td class="text-end"><button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#edit-division-{{ d.id }}">แก้</button> <form method="post" action="{{ url_for('sport_division_delete', division_id=d.id) }}" class="d-inline" onsubmit="return confirm('ลบรายการย่อยนี้?')"><button class="btn btn-sm btn-outline-danger">ลบ</button></form></td>
+          </tr>
+          <tr class="collapse" id="edit-division-{{ d.id }}"><td colspan="9">
+            <form method="post" action="{{ url_for('sport_division_update', division_id=d.id) }}" class="row g-2">
+              <div class="col-md-3"><select class="form-select form-select-sm" name="sport_id">{% for s in sports %}<option value="{{ s.id }}" {{ 'selected' if d.sport_id==s.id else '' }}>{{ s.name }}</option>{% endfor %}</select></div>
+              <div class="col-md-2"><input class="form-control form-control-sm" name="class_name" value="{{ d.class_name }}" required></div>
+              <div class="col-md-1"><select class="form-select form-select-sm" name="gender">{% for g in ['ชาย','หญิง','ผสม'] %}<option value="{{ g }}" {{ 'selected' if d.gender==g else '' }}>{{ g }}</option>{% endfor %}</select></div>
+              <div class="col-md-2"><select class="form-select form-select-sm" name="competition_format">{% for f in ['ranking','round_robin','knockout','double_knockout','swiss','tournoi','shooting','score_judging'] %}<option value="{{ f }}" {{ 'selected' if d.competition_format==f else '' }}>{{ f }}</option>{% endfor %}</select></div>
+              <div class="col-md-2"><select class="form-select form-select-sm" name="result_type">{% for rt in ['score_only','set_based','ranking','contest'] %}<option value="{{ rt }}" {{ 'selected' if d.result_type==rt else '' }}>{{ rt }}</option>{% endfor %}</select></div>
+              <div class="col-md-1"><input class="form-control form-control-sm" type="number" name="max_sets" value="{{ d.max_sets or '' }}" placeholder="เซต"></div>
+              <div class="col-md-1"><input class="form-control form-control-sm" type="number" name="sets_to_win" value="{{ d.sets_to_win or '' }}" placeholder="ชนะ"></div>
+              <div class="col-md-2"><input class="form-control form-control-sm" type="number" name="points_per_set" value="{{ d.points_per_set or '' }}" placeholder="แต้ม/เซต"></div>
+              <div class="col-md-2"><input class="form-control form-control-sm" type="number" name="max_athletes_per_team" value="{{ d.max_athletes_per_team or '' }}" placeholder="จำกัด/ทีม"></div>
+              <div class="col-md-2"><label class="small"><input type="checkbox" name="is_active" value="1" {{ 'checked' if d.is_active else '' }}> เปิดใช้</label></div>
+              <div class="col-md-2"><button class="btn btn-sm btn-primary w-100">บันทึกรายการย่อย</button></div>
+            </form>
+          </td></tr>
+        {% else %}
+          <tr><td colspan="9"><div class="empty-box">ยังไม่มีรายการย่อย ใช้กล่อง “ปรับ/เพิ่มคลังกีฬาขั้นสูง” ด้านบนได้เลย</div></td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+  const form = document.getElementById('quickSportForm');
+  if(!form) return;
+  const sportId = document.getElementById('quickSportId');
+  const sportName = document.getElementById('quickSportName');
+  const categoryId = document.getElementById('quickCategoryId');
+  const categoryName = document.getElementById('quickCategoryName');
+  const categoryPreset = document.getElementById('quickCategoryPreset');
+  const format = document.getElementById('quickCompetitionFormat');
+  const result = document.getElementById('quickResultType');
+  const maxSets = document.getElementById('quickMaxSets');
+  const points = document.getElementById('quickPoints');
+  const win = document.getElementById('quickWin');
+  const className = document.getElementById('quickClassName');
+  const preview = document.getElementById('quickPreview');
+  const setFields = document.querySelector('.js-set-fields');
+
+  function updateSetFields(){
+    setFields.classList.toggle('d-none', result.value !== 'set_based');
+  }
+  function chooseCategory(text){
+    categoryPreset.value = text || '';
+    if(!text) return;
+    let found = false;
+    [...categoryId.options].forEach(opt => {
+      if(opt.textContent.trim() === text){ categoryId.value = opt.value; found = true; }
+    });
+    categoryName.value = found ? '' : text;
+  }
+  function updatePreview(){
+    const sport = sportId.value ? sportId.options[sportId.selectedIndex].textContent.trim() : (sportName.value || 'กีฬาใหม่');
+    const levels = (className.value || 'Open').split(/[\n,]+/).map(x => x.trim()).filter(Boolean);
+    const genders = [...form.querySelectorAll('input[name="gender"]:checked')].map(x => x.value);
+    preview.textContent = `พร้อมเพิ่ม: ${sport} · ${levels.length || 1} รุ่น · ${genders.length || 1} เพศ · ระบบ ${format.value}`;
+  }
+  document.querySelectorAll('.preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      sportId.value = '';
+      sportName.value = btn.dataset.sport || '';
+      chooseCategory(btn.dataset.category || '');
+      format.value = btn.dataset.format || 'ranking';
+      result.value = btn.dataset.result || 'score_only';
+      maxSets.value = btn.dataset.maxSets || '';
+      points.value = btn.dataset.points || '';
+      win.value = btn.dataset.win || '';
+      updateSetFields(); updatePreview(); sportName.focus();
+    });
+  });
+  document.querySelectorAll('.level-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      className.value = (btn.dataset.levels || '').replaceAll(', ', '\n');
+      updatePreview();
+    });
+  });
+  sportId.addEventListener('change', () => {
+    const opt = sportId.options[sportId.selectedIndex];
+    if(sportId.value){
+      sportName.value = '';
+      if(opt.dataset.category){ categoryId.value = opt.dataset.category; categoryName.value = ''; }
+      format.value = opt.dataset.format || 'ranking';
+      result.value = opt.dataset.result || 'score_only';
+      maxSets.value = opt.dataset.maxSets || '';
+      points.value = opt.dataset.points || '';
+      win.value = opt.dataset.win || '';
+    }
+    updateSetFields(); updatePreview();
+  });
+  [sportName, categoryName, format, result, maxSets, points, win, className].forEach(el => el.addEventListener('input', () => { updateSetFields(); updatePreview(); }));
+  form.querySelectorAll('input[name="gender"]').forEach(el => el.addEventListener('change', updatePreview));
+  updateSetFields(); updatePreview();
+});
+</script>
 {% endblock %}

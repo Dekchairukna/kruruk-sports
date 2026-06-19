@@ -1,0 +1,307 @@
+{% extends 'base.html' %}
+{% block page_title %}โปรแกรมและจัดการแข่งขัน{% endblock %}
+{% block content %}
+<div class="program-hero mb-4">
+  <div>
+    <div class="text-muted small">{{ event.organization.name }}</div>
+    <h3 class="mb-1">โปรแกรมและจัดการแข่งขัน</h3>
+    <div class="text-muted">{{ event.name }} · ใช้ระหว่างแข่งขันจริง บันทึกผล ดูตาราง และจัดรอบต่อ</div>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-primary" href="{{ url_for('event_detail', event_id=event.id) }}"><i class="bi bi-arrow-left"></i> หน้างาน</a>
+    <a class="btn btn-warning fw-bold" href="{{ url_for('event_competition_wizard', event_id=event.id) }}"><i class="bi bi-plus-circle"></i> สร้างการแข่งขัน</a>
+    <a class="btn btn-outline-success" href="{{ url_for('event_certificates', event_id=event.id) }}"><i class="bi bi-award"></i> เกียรติบัตร</a>
+    <a class="btn btn-outline-dark" target="_blank" href="{{ url_for('event_program_print', event_id=event.id) }}"><i class="bi bi-printer"></i> พิมพ์รายงาน</a>
+    <a class="btn btn-primary" target="_blank" href="{{ url_for('event_live_board', event_id=event.id) }}"><i class="bi bi-tv"></i> เปิดจอ</a>
+  </div>
+</div>
+
+<div class="program-nav mb-4">
+  <a href="#round-robin"><i class="bi bi-diagram-3"></i> รอบแบ่งกลุ่ม / พบกันหมด</a>
+  <a href="#knockout"><i class="bi bi-trophy"></i> Knockout</a>
+  <a href="#ranking"><i class="bi bi-list-ol"></i> จัดอันดับ</a>
+  <a href="#contest"><i class="bi bi-star"></i> ประกวด</a>
+</div>
+
+<section id="round-robin" class="mb-4">
+  <div class="section-title-row">
+    <div>
+      <h4 class="mb-1">รอบแบ่งกลุ่ม / พบกันหมด</h4>
+      <div class="text-muted small">ตารางโปรแกรม คะแนนกลุ่ม และปุ่มสร้างรอบต่ออยู่ในกล่องเดียว</div>
+    </div>
+  </div>
+
+  {% for section in rr_sections %}
+  {% set comp = section.comp %}
+  <div class="program-card mb-4" id="rr-{{ comp.id }}">
+    <div class="program-card-head">
+      <div>
+        <div class="d-flex flex-wrap gap-2 mb-2">
+          <span class="badge text-bg-primary">Round Robin</span>
+          <span class="badge text-bg-secondary">{{ comp.status }}</span>
+          <span class="badge text-bg-light border">{{ comp.num_groups }} กลุ่ม</span>
+          <span class="badge text-bg-light border">เข้ารอบกลุ่มละ {{ comp.advance_per_group }}{% if comp.best_runnerup_count %} + รองดีที่สุด {{ comp.best_runnerup_count }}{% endif %}</span>
+        </div>
+        <h4 class="mb-1">{{ comp.name }}</h4>
+        <div class="text-muted small">{{ comp.sport_division.label if comp.sport_division else 'ไม่ระบุชนิดกีฬา' }}</div>
+      </div>
+      <div class="program-progress">
+        <b>{{ section.completed }}/{{ section.total }}</b>
+        <span>คู่ที่บันทึกผลแล้ว</span>
+      </div>
+    </div>
+
+    <div class="program-step-row">
+      <span class="step-pill done">1 ตั้งค่ารายการ</span>
+      <span class="step-pill done">2 ทีม/สาย</span>
+      <span class="step-pill {{ 'done' if section.all_done else 'current' }}">3 บันทึกผล</span>
+      <span class="step-pill {{ 'done' if section.existing_ko else ('current' if section.all_done else '') }}">4 จัดรอบต่อ</span>
+      <span class="step-pill">5 สรุปผล</span>
+    </div>
+
+    {% if section.next_round_preview and section.next_round_preview.rounds %}
+    <div class="next-route-panel mb-3">
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+        <div>
+          <b><i class="bi bi-diagram-2"></i> {{ section.next_round_preview.title }}</b>
+          <div class="small text-muted">แสดงสูตรไขว้สายไว้ตั้งแต่ต้น เพื่อให้รู้ว่าแข่งจบรอบแรกแล้วไปทางไหนต่อ</div>
+        </div>
+      </div>
+      <div class="route-round-grid">
+        {% for r in section.next_round_preview.rounds %}
+        <div class="route-round-card">
+          <div class="route-round-title">{{ r.name }}</div>
+          {% for pair in r.matches %}
+          <div class="route-pair">
+            <span>คู่ {{ pair.match_no }}</span>
+            <b>{{ pair.a.team or pair.a.label }}</b>
+            <em>พบ</em>
+            <b>{{ pair.b.team or pair.b.label }}</b>
+            {% if pair.a.team or pair.b.team %}
+            <small>{{ pair.a.label }} / {{ pair.b.label }}</small>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if section.existing_ko %}
+    <div class="alert alert-success d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <div><i class="bi bi-check-circle"></i> สร้าง Knockout ต่อแล้ว: <b>{{ section.existing_ko.name }}</b></div>
+      <a class="btn btn-sm btn-success" href="#ko-{{ section.existing_ko.id }}">ไปดูสาย Knockout</a>
+    </div>
+    {% elif section.can_create_ko %}
+    <div class="next-round-box">
+      <div>
+        <b>รอบแรกครบแล้ว</b>
+        <div class="small text-muted">ระบบจะดึงทีมเข้ารอบตามสูตรที่ตั้งไว้ แล้วไขว้สายอัตโนมัติ</div>
+      </div>
+      <form method="post" action="{{ url_for('rr_create_knockout', comp_id=comp.id) }}">
+        <button class="btn btn-success fw-bold"><i class="bi bi-diagram-2"></i> สร้างรอบ Knockout ต่อ</button>
+      </form>
+    </div>
+    {% elif section.total %}
+    <div class="alert alert-info mb-3"><i class="bi bi-info-circle"></i> บันทึกผลให้ครบก่อน ระบบจึงจะแสดงปุ่มจัดรอบต่อ</div>
+    {% endif %}
+
+    {% for g in section.groups %}
+    <div class="group-block">
+      <div class="group-block-title">
+        <h5 class="mb-0">กลุ่ม {{ g.group.name }}</h5>
+        <div class="small text-muted">{{ g.teams|length }} ทีม · {{ g.matches|length }} คู่</div>
+      </div>
+      <div class="row g-3">
+        <div class="col-xl-8">
+          <div class="table-responsive program-table-wrap">
+            <table class="table program-table align-middle">
+              <thead>
+                <tr>
+                  <th style="width:58px">คู่</th>
+                  <th>ทีม A</th>
+                  <th class="text-center" style="width:130px">ผล</th>
+                  <th>ทีม B</th>
+                  <th style="width:210px">บันทึก</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for m in g.matches %}
+                <tr id="rr-match-{{ m.id }}">
+                  <td class="fw-bold">{{ m.match_no }}</td>
+                  <td>{{ m.team_a.name }}</td>
+                  <td class="text-center">
+                    {% set rt = result_text(m) %}
+                    <div class="result-main">{% if rt %}{{ rt }}{% else %}<span class="text-muted small">รอผล</span>{% endif %}</div>
+                    {% if set_badges(m) %}
+                    <div class="set-chip-row justify-content-center mt-1">
+                      {% for b in set_badges(m) %}<span class="set-chip">{{ b }}</span>{% endfor %}
+                    </div>
+                    {% endif %}
+                  </td>
+                  <td>{{ m.team_b.name }}</td>
+                  <td>
+                    {% if section.result_type == 'set_based' %}
+                      <a class="btn btn-sm btn-primary w-100" href="{{ url_for('rr_match_result', match_id=m.id) }}"><i class="bi bi-pencil-square"></i> บันทึกรายเซต</a>
+                    {% else %}
+                      <form method="post" action="{{ url_for('rr_match_score', match_id=m.id) }}" class="quick-score-form">
+                        <input class="form-control form-control-sm" type="number" name="score_a" min="0" value="{{ m.score_a if m.score_a is not none else '' }}" aria-label="คะแนนทีม A">
+                        <span>-</span>
+                        <input class="form-control form-control-sm" type="number" name="score_b" min="0" value="{{ m.score_b if m.score_b is not none else '' }}" aria-label="คะแนนทีม B">
+                        <button class="btn btn-sm btn-primary">บันทึก</button>
+                      </form>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="text-muted text-center py-3">ยังไม่มีโปรแกรมในกลุ่มนี้</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="col-xl-4">
+          <div class="standing-panel h-100">
+            <h6 class="mb-2">ตารางคะแนนกลุ่ม {{ g.group.name }}</h6>
+            <div class="table-responsive">
+              <table class="table table-sm align-middle mb-0">
+                <thead><tr><th>#</th><th>ทีม</th><th class="text-center">แข่ง</th><th class="text-center">ชนะ</th><th class="text-center">แต้ม</th></tr></thead>
+                <tbody>
+                  {% for row in g.standings %}
+                  <tr>
+                    <td>{{ row.rank }}</td>
+                    <td>{{ row.team.name }}</td>
+                    <td class="text-center">{{ row.played }}</td>
+                    <td class="text-center">{{ row.wins }}</td>
+                    <td class="text-center fw-bold">{{ row.points }}</td>
+                  </tr>
+                  {% else %}
+                  <tr><td colspan="5" class="text-muted text-center">ยังไม่มีอันดับ</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-box">ยังไม่มีรายการแบบแบ่งกลุ่ม/พบกันหมด</div>
+  {% endfor %}
+</section>
+
+<section id="knockout" class="mb-4">
+  <div class="section-title-row">
+    <div><h4 class="mb-1">Knockout / สายแข่งขัน</h4><div class="text-muted small">บันทึกผู้ชนะแล้วระบบสร้างรอบต่อให้อัตโนมัติ หรือกดตรวจรอบต่อได้</div></div>
+  </div>
+
+  {% for section in ko_sections %}
+  {% set comp = section.comp %}
+  <div class="program-card mb-4" id="ko-{{ comp.id }}">
+    <div class="program-card-head">
+      <div>
+        <div class="d-flex flex-wrap gap-2 mb-2"><span class="badge text-bg-dark">Knockout</span><span class="badge text-bg-secondary">{{ comp.status }}</span></div>
+        <h4 class="mb-1">{{ comp.name }}</h4>
+        <div class="text-muted small">{{ comp.sport_division.label if comp.sport_division else 'ไม่ระบุชนิดกีฬา' }}</div>
+      </div>
+      <div class="program-progress"><b>{{ section.completed }}/{{ section.total }}</b><span>คู่ที่บันทึกผลแล้ว</span></div>
+    </div>
+
+    <div class="d-flex justify-content-end mb-3">
+      <form method="post" action="{{ url_for('knockout_advance', comp_id=comp.id) }}">
+        <button class="btn btn-outline-primary"><i class="bi bi-arrow-repeat"></i> ตรวจ/สร้างรอบถัดไป</button>
+      </form>
+    </div>
+
+    {% if section.future_preview and section.future_preview.rounds %}
+    <div class="next-route-panel mb-3">
+      <b><i class="bi bi-braces"></i> เส้นทางสาย Knockout ต่อจากรอบแรก</b>
+      <div class="small text-muted mb-2">แสดงสายติดกันจนจบ ไม่ต้องเดาว่าผู้ชนะจะไปเจอใคร</div>
+      <div class="route-round-grid">
+        {% for r in section.future_preview.rounds %}
+        <div class="route-round-card">
+          <div class="route-round-title">{{ r.name }}</div>
+          {% for pair in r.matches %}
+          <div class="route-pair"><span>คู่ {{ pair.match_no }}</span><b>{{ pair.a.label }}</b><em>พบ</em><b>{{ pair.b.label }}</b></div>
+          {% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="ko-round-grid">
+      {% for round in section.rounds %}
+      <div class="ko-round-card">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h5 class="mb-0">{{ round.round_name }}</h5>
+          <span class="badge text-bg-light border">{{ round.completed }}/{{ round.total }}</span>
+        </div>
+        {% for m in round.matches %}
+        <div class="ko-match" id="ko-match-{{ m.id }}">
+          <div class="small text-muted mb-1">คู่ที่ {{ m.match_no }}</div>
+          <div class="ko-teams">
+            <span>{{ m.team_a.name if m.team_a else 'รอผู้ชนะ/BYE' }}</span>
+            {% set rt = result_text(m) %}
+            <b>{% if rt %}{{ rt }}{% else %}<span class="text-muted small">รอผล</span>{% endif %}</b>
+            <span>{{ m.team_b.name if m.team_b else 'รอผู้ชนะ/BYE' }}</span>
+          </div>
+          {% if set_badges(m) %}<div class="set-chip-row mt-2">{% for b in set_badges(m) %}<span class="set-chip">{{ b }}</span>{% endfor %}</div>{% endif %}
+          <div class="mt-2">
+            {% if section.result_type == 'set_based' %}
+              <a class="btn btn-sm btn-primary w-100" href="{{ url_for('knockout_match_result', match_id=m.id) }}"><i class="bi bi-pencil-square"></i> บันทึกรายเซต</a>
+            {% else %}
+              <form method="post" action="{{ url_for('knockout_match_score', match_id=m.id) }}" class="quick-score-form">
+                <input class="form-control form-control-sm" type="number" name="score_a" min="0" value="{{ m.score_a if m.score_a is not none else '' }}" aria-label="คะแนนทีม A">
+                <span>-</span>
+                <input class="form-control form-control-sm" type="number" name="score_b" min="0" value="{{ m.score_b if m.score_b is not none else '' }}" aria-label="คะแนนทีม B">
+                <button class="btn btn-sm btn-primary">บันทึก</button>
+              </form>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty-box">ยังไม่มีสาย Knockout</div>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <div class="empty-box">ยังไม่มีรายการ Knockout</div>
+  {% endfor %}
+</section>
+
+<section id="ranking" class="mb-4">
+  <div class="section-title-row"><div><h4 class="mb-1">กีฬาจัดอันดับ / เก็บเวลา / เก็บคะแนน</h4></div></div>
+  <div class="row g-3">
+    {% for section in ranking_sections %}
+    {% set comp = section.comp %}
+    <div class="col-lg-6" id="ranking-{{ comp.id }}">
+      <div class="program-card h-100">
+        <div class="d-flex justify-content-between gap-2 mb-2"><div><span class="badge text-bg-info">Ranking</span><h5 class="mt-2">{{ comp.name }}</h5><div class="text-muted small">{{ comp.sport_division.label if comp.sport_division else 'ไม่ระบุชนิดกีฬา' }}</div></div><a class="btn btn-primary align-self-start" href="{{ url_for('ranking_detail', comp_id=comp.id) }}">บันทึกผล</a></div>
+        <table class="table table-sm"><thead><tr><th>อันดับ</th><th>ทีม/ผู้เข้าแข่ง</th><th>ผล</th></tr></thead><tbody>{% for r in section.results[:5] %}<tr><td>{{ r.rank or '-' }}</td><td>{{ r.competitor_name or (r.team.name if r.team else '-') }}</td><td>{{ r.score_value or r.time_value or r.distance_value or '-' }}</td></tr>{% else %}<tr><td colspan="3" class="text-muted text-center">ยังไม่มีผล</td></tr>{% endfor %}</tbody></table>
+      </div>
+    </div>
+    {% else %}<div class="col-12"><div class="empty-box">ยังไม่มีรายการจัดอันดับ</div></div>{% endfor %}
+  </div>
+</section>
+
+<section id="contest" class="mb-4">
+  <div class="section-title-row"><div><h4 class="mb-1">กิจกรรมประกวด</h4></div></div>
+  <div class="row g-3">
+    {% for section in contest_sections %}
+    {% set comp = section.comp %}
+    <div class="col-lg-6" id="contest-{{ comp.id }}">
+      <div class="program-card h-100">
+        <div class="d-flex justify-content-between gap-2 mb-2"><div><span class="badge text-bg-warning">Contest</span><h5 class="mt-2">{{ comp.name }}</h5><div class="text-muted small">กรรมการ {{ section.judges|length }} คน</div></div><a class="btn btn-primary align-self-start" href="{{ url_for('contest_detail', comp_id=comp.id) }}">ให้คะแนน</a></div>
+        <table class="table table-sm"><thead><tr><th>อันดับ</th><th>ทีม</th><th>คะแนน</th></tr></thead><tbody>{% for r in section.results[:5] %}<tr><td>{{ r.rank or '-' }}</td><td>{{ r.team.name if r.team else '-' }}</td><td>{{ '%.2f'|format(r.total_score or 0) }}</td></tr>{% else %}<tr><td colspan="3" class="text-muted text-center">ยังไม่มีผล</td></tr>{% endfor %}</tbody></table>
+      </div>
+    </div>
+    {% else %}<div class="col-12"><div class="empty-box">ยังไม่มีกิจกรรมประกวด</div></div>{% endfor %}
+  </div>
+</section>
+{% endblock %}

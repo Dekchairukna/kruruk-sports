@@ -5,8 +5,8 @@
   <div>
     <h4 class="mb-0">{{ comp.name }}</h4>
     <div class="text-muted small">
-      {{ comp.sport_division.label if comp.sport_division else comp.event.name }} · {{ knockout_result_type(comp) }}
-      {% if knockout_result_type(comp)=='set_based' %} · {{ comp.max_sets or 3 }} เซต ชนะ {{ comp.sets_to_win or 2 }}{% endif %}
+      {{ comp.sport_division.label if comp.sport_division else comp.event.name }} · {{ comp.result_type }}
+      {% if comp.result_type=='set_based' %} · {{ comp.max_sets }} เซต ชนะ {{ comp.sets_to_win }}{% endif %}
     </div>
   </div>
   <div class="d-flex gap-2">
@@ -29,7 +29,7 @@
               <th>ทีม A</th>
               <th style="width:140px">ผล</th>
               <th>ทีม B</th>
-              {% if knockout_result_type(comp) == 'set_based' %}<th>คะแนนรายเซต</th>{% endif %}
+              {% if comp.result_type == 'set_based' %}<th>คะแนนรายเซต</th>{% endif %}
               <th>ผู้ชนะ</th>
               <th style="width:150px">บันทึก</th>
             </tr>
@@ -41,7 +41,7 @@
               <td>{{ m.match_no }}</td>
               <td class="fw-semibold">{{ m.team_a.name if m.team_a else 'BYE' }}</td>
               <td>
-                {% if knockout_result_type(comp) == 'set_based' %}
+                {% if comp.result_type == 'set_based' %}
                   <div class="set-result-main">
                     <span>{{ '-' if m.score_a is none else m.score_a }}</span>
                     <span class="text-muted">-</span>
@@ -54,7 +54,7 @@
                 {% endif %}
               </td>
               <td class="fw-semibold">{{ m.team_b.name if m.team_b else 'BYE' }}</td>
-              {% if knockout_result_type(comp) == 'set_based' %}
+              {% if comp.result_type == 'set_based' %}
               <td>
                 {% if score_rows %}
                   <div class="set-score-line">
@@ -76,14 +76,14 @@
                 {% if m.winner_team %}<span class="badge bg-success">{{ m.winner_team.name }}</span>{% else %}<span class="text-muted">รอบันทึก</span>{% endif %}
               </td>
               <td>
-                {% if knockout_result_type(comp) == 'set_based' %}
+                {% if comp.result_type == 'set_based' %}
                   <a class="btn btn-sm btn-primary" href="{{ url_for('knockout_match_result', match_id=m.id) }}">บันทึก/แก้ไข</a>
                 {% else %}
                   <form method="post" action="{{ url_for('knockout_match_score', match_id=m.id) }}" class="d-flex gap-1 align-items-center">
-                    <input class="form-control form-control-sm score-box" name="score_a" value="{{ '' if m.score_a is none else m.score_a }}">
+                    <input class="form-control form-control-sm score-box" name="score_a" value="{{ '' if m.score_a is none else m.score_a }}" placeholder="A">
                     <span>-</span>
-                    <input class="form-control form-control-sm score-box" name="score_b" value="{{ '' if m.score_b is none else m.score_b }}">
-                    <input class="form-control form-control-sm" name="note" value="{{ m.note or '' }}">
+                    <input class="form-control form-control-sm score-box" name="score_b" value="{{ '' if m.score_b is none else m.score_b }}" placeholder="B">
+                    <input class="form-control form-control-sm" name="note" value="{{ m.note or '' }}" placeholder="หมายเหตุ">
                     <button class="btn btn-sm btn-primary">บันทึก</button>
                   </form>
                 {% endif %}

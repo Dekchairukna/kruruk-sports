@@ -10,22 +10,37 @@
 </head>
 <body>
 {% if current_user.is_authenticated %}
+{% set nav_eid = active_event_id() %}
+{% set nav_oid = active_org_id() %}
 <div class="app-shell">
-  <aside class="sidebar">
+  <aside class="sidebar app-sidebar-modern">
     <div class="brand"><span class="brand-mark">KS</span><div><b>KRURUK</b><small>SPORTS</small></div></div>
-    <nav class="nav flex-column gap-1">
-      <a class="nav-link" href="{{ url_for('dashboard') }}"><i class="bi bi-grid-1x2"></i> Dashboard</a>
-      <a class="nav-link" href="{{ url_for('organizations') }}"><i class="bi bi-building"></i> Organizations</a>
-      <a class="nav-link" href="{{ url_for('events') }}"><i class="bi bi-trophy"></i> Events</a>
-      {% set nav_eid = active_event_id() %}
-      {% set nav_oid = active_org_id() %}
-      <a class="nav-link" href="{{ url_for('teams_home') }}"><i class="bi bi-people"></i> Teams / Colors</a>
-      <a class="nav-link" href="{{ url_for('sport_setup_home') }}"><i class="bi bi-sliders"></i> Sport Setup</a>
+    <div class="trial-pill mt-3"><i class="bi bi-stars"></i> {{ app_trial_label }}</div>
+
+    <nav class="nav flex-column sidebar-nav-modern">
+      <div class="nav-group-label">ภาพรวม</div>
+      <a class="nav-link" href="{{ url_for('dashboard') }}"><i class="bi bi-speedometer2"></i> แดชบอร์ด</a>
+      <a class="nav-link" href="{{ url_for('event_new') }}"><i class="bi bi-plus-square"></i> สร้างงานแข่งขัน</a>
+
+      {% if nav_eid %}
+      <div class="nav-group-label">งานที่เลือก</div>
+      <a class="nav-link" href="{{ url_for('event_detail', event_id=nav_eid) }}"><i class="bi bi-trophy"></i> หน้างาน</a>
+      <a class="nav-link" href="{{ url_for('team_new', event_id=nav_eid) }}"><i class="bi bi-people"></i> ทีม / สี</a>
+      <a class="nav-link" href="{{ url_for('event_competition_program', event_id=nav_eid) }}"><i class="bi bi-table"></i> โปรแกรมแข่ง</a>
+      <a class="nav-link" href="{{ url_for('event_competition_wizard', event_id=nav_eid) }}"><i class="bi bi-diagram-3"></i> สร้างการแข่งขัน</a>
+      <a class="nav-link" href="{{ url_for('event_sports', event_id=nav_eid) }}"><i class="bi bi-box-seam"></i> คลังกีฬา</a>
+      <a class="nav-link" href="{{ url_for('event_live_board_settings', event_id=nav_eid) }}"><i class="bi bi-display"></i> Live Board</a>
+      {% endif %}
+
+      <div class="nav-group-label">ระบบ</div>
       <a class="nav-link" href="{{ url_for('billing_home') }}"><i class="bi bi-credit-card"></i> Billing</a>
-      {% if current_user.is_superadmin %}<a class="nav-link" href="{{ url_for('admin_subscription_plans') }}"><i class="bi bi-stars"></i> Packages</a>{% endif %}
+      {% if current_user.is_superadmin %}
+      <a class="nav-link" href="{{ url_for('organizations') }}"><i class="bi bi-building"></i> Organizations</a>
+      <a class="nav-link" href="{{ url_for('admin_subscription_plans') }}"><i class="bi bi-stars"></i> Packages</a>
+      {% endif %}
       <a class="nav-link" href="{{ url_for('settings') }}"><i class="bi bi-gear"></i> Settings</a>
     </nav>
-    <div class="sidebar-footer">Phase 13F · Context Fix</div>
+    <div class="sidebar-footer"><span class="footer-dot"></span> ทดลองใช้ระบบ · 5050</div>
   </aside>
   <main class="main">
     <header class="topbar">
@@ -33,7 +48,8 @@
         <div class="text-muted small">ระบบบริหารจัดการแข่งขันกีฬา</div>
         <h5 class="mb-0">{% block page_title %}Dashboard{% endblock %}</h5>
       </div>
-      <div class="d-flex align-items-center gap-3">
+      <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+        <span class="top-trial-badge"><i class="bi bi-circle-fill"></i> ทดลองใช้</span>
         <span class="user-pill"><i class="bi bi-person-circle"></i> {{ current_user.name }}</span>
         <a class="btn btn-outline-danger btn-sm" href="{{ url_for('logout') }}">Logout</a>
       </div>
