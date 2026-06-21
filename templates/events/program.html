@@ -60,30 +60,43 @@
     </div>
 
     {% if section.next_round_preview and section.next_round_preview.rounds %}
-    <div class="next-route-panel mb-3">
-      <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+    <div class="fishbone-panel mb-3">
+      <div class="fishbone-head">
         <div>
           <b><i class="bi bi-diagram-2"></i> {{ section.next_round_preview.title }}</b>
-          <div class="small text-muted">แสดงสูตรไขว้สายไว้ตั้งแต่ต้น เพื่อให้รู้ว่าแข่งจบรอบแรกแล้วไปทางไหนต่อ</div>
+          <div class="small text-muted">แสดงก้างปลารอบต่อไปตั้งแต่ก่อนแข่งจบ เห็นชัดว่าอันดับไหนต้องไปเจอใคร</div>
         </div>
+        <span class="fishbone-badge"><i class="bi bi-trophy"></i> เส้นทางเข้ารอบ</span>
       </div>
-      <div class="route-round-grid">
-        {% for r in section.next_round_preview.rounds %}
-        <div class="route-round-card">
-          <div class="route-round-title">{{ r.name }}</div>
-          {% for pair in r.matches %}
-          <div class="route-pair">
-            <span>คู่ {{ pair.match_no }}</span>
-            <b>{{ pair.a.team or pair.a.label }}</b>
-            <em>พบ</em>
-            <b>{{ pair.b.team or pair.b.label }}</b>
-            {% if pair.a.team or pair.b.team %}
-            <small>{{ pair.a.label }} / {{ pair.b.label }}</small>
-            {% endif %}
+      <div class="fishbone-scroll">
+        <div class="fishbone-board fishbone-board-compact">
+          {% for r in section.next_round_preview.rounds %}
+          {% if 'อันดับ 3' not in r.name and 'ที่ 3' not in r.name %}
+          <div class="fishbone-round {{ 'multi' if r.matches|length > 1 else '' }} {{ 'is-final' if 'ชิงชนะเลิศ' in r.name else '' }}">
+            <div class="fishbone-round-title">{{ r.name }}</div>
+            {% for pair in r.matches %}
+            <div class="fishbone-match">
+              <div class="fishbone-match-no">คู่ที่ {{ pair.match_no }}</div>
+              <div class="fishbone-slot">
+                <b>{{ pair.a.team or pair.a.label }}</b>
+                {% if pair.a.team %}<small>{{ pair.a.label }}</small>{% endif %}
+              </div>
+              <div class="fishbone-vs">พบ</div>
+              <div class="fishbone-slot">
+                <b>{{ pair.b.team or pair.b.label }}</b>
+                {% if pair.b.team %}<small>{{ pair.b.label }}</small>{% endif %}
+              </div>
+            </div>
+            {% endfor %}
           </div>
+          {% endif %}
           {% endfor %}
+          <div class="fishbone-champion">
+            <div class="fishbone-cup"><i class="bi bi-trophy-fill"></i></div>
+            <b>ชนะเลิศ</b>
+            <small>ผู้ชนะรอบสุดท้าย</small>
+          </div>
         </div>
-        {% endfor %}
       </div>
     </div>
     {% endif %}
@@ -217,18 +230,37 @@
     </div>
 
     {% if section.future_preview and section.future_preview.rounds %}
-    <div class="next-route-panel mb-3">
-      <b><i class="bi bi-braces"></i> เส้นทางสาย Knockout ต่อจากรอบแรก</b>
-      <div class="small text-muted mb-2">แสดงสายติดกันจนจบ ไม่ต้องเดาว่าผู้ชนะจะไปเจอใคร</div>
-      <div class="route-round-grid">
-        {% for r in section.future_preview.rounds %}
-        <div class="route-round-card">
-          <div class="route-round-title">{{ r.name }}</div>
-          {% for pair in r.matches %}
-          <div class="route-pair"><span>คู่ {{ pair.match_no }}</span><b>{{ pair.a.label }}</b><em>พบ</em><b>{{ pair.b.label }}</b></div>
-          {% endfor %}
+    <div class="fishbone-panel mb-3">
+      <div class="fishbone-head">
+        <div>
+          <b><i class="bi bi-braces"></i> เส้นทางสาย Knockout ต่อจากรอบแรก</b>
+          <div class="small text-muted">แสดงสายติดกันจนจบ ไม่ต้องเดาว่าผู้ชนะจะไปเจอใคร</div>
         </div>
-        {% endfor %}
+        <span class="fishbone-badge"><i class="bi bi-trophy"></i> Bracket</span>
+      </div>
+      <div class="fishbone-scroll">
+        <div class="fishbone-board fishbone-board-compact">
+          {% for r in section.future_preview.rounds %}
+          {% if 'อันดับ 3' not in r.name and 'ที่ 3' not in r.name %}
+          <div class="fishbone-round {{ 'multi' if r.matches|length > 1 else '' }} {{ 'is-final' if 'ชิงชนะเลิศ' in r.name else '' }}">
+            <div class="fishbone-round-title">{{ r.name }}</div>
+            {% for pair in r.matches %}
+            <div class="fishbone-match">
+              <div class="fishbone-match-no">คู่ที่ {{ pair.match_no }}</div>
+              <div class="fishbone-slot"><b>{{ pair.a.label }}</b></div>
+              <div class="fishbone-vs">พบ</div>
+              <div class="fishbone-slot"><b>{{ pair.b.label }}</b></div>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+          {% endfor %}
+          <div class="fishbone-champion">
+            <div class="fishbone-cup"><i class="bi bi-trophy-fill"></i></div>
+            <b>ชนะเลิศ</b>
+            <small>ผู้ชนะรอบสุดท้าย</small>
+          </div>
+        </div>
       </div>
     </div>
     {% endif %}
