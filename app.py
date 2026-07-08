@@ -330,7 +330,11 @@ def deny_upgrade(message, endpoint="events", **route_values):
 
 def check_event_limit(org):
     from models import Event
+    if current_user.is_authenticated and current_user.is_superadmin:
+        return True, ""
     plan = get_current_plan(org)
+    if not plan:
+        return False, "ยังไม่มีแพ็กเกจเริ่มต้นในระบบ"
     current = Event.query.filter_by(organization_id=org.id).count()
     limit = limit_value(plan, "max_events")
     if current >= limit:
@@ -340,7 +344,11 @@ def check_event_limit(org):
 
 def check_team_limit(event):
     from models import Team
+    if current_user.is_authenticated and current_user.is_superadmin:
+        return True, ""
     plan = get_current_plan(event.organization)
+    if not plan:
+        return False, "ยังไม่มีแพ็กเกจเริ่มต้นในระบบ"
     current = Team.query.filter_by(event_id=event.id).count()
     limit = limit_value(plan, "max_teams_per_event")
     if current >= limit:
@@ -350,7 +358,11 @@ def check_team_limit(event):
 
 def check_athlete_limit(event, additional=1):
     from models import Athlete, Team
+    if current_user.is_authenticated and current_user.is_superadmin:
+        return True, ""
     plan = get_current_plan(event.organization)
+    if not plan:
+        return False, "ยังไม่มีแพ็กเกจเริ่มต้นในระบบ"
     current = Athlete.query.join(Team).filter(Team.event_id == event.id).count()
     limit = limit_value(plan, "max_athletes_per_event")
     if current + additional > limit:
